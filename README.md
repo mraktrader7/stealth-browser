@@ -2,7 +2,7 @@
 
 > **Personal web automation platform** — Write scripts, bypass bot detection, schedule tasks, and watch live logs stream to your dashboard.
 
-Built with **Playwright stealth** (bypasses CAPTCHAs & anti-bot systems), a **VS Code–style editor** in the browser, real-time **Socket.IO log streaming**, and a **task scheduler** with cron support.
+Built with **Playwright stealth** (bypasses CAPTCHAs & anti-bot systems), a **VS Code–style editor** in the browser, real-time **Socket.IO log streaming**, a **task scheduler** with cron support, and a **visual Automation Playground** to build scripts without writing code.
 
 ---
 
@@ -14,8 +14,26 @@ Built with **Playwright stealth** (bypasses CAPTCHAs & anti-bot systems), a **VS
 ### Scripts — VS Code Monaco Editor in the browser
 ![Scripts](docs/screenshots/scripts.png)
 
+### Scripts — Version History panel (History + Duplicate buttons)
+![Scripts with History](docs/screenshots/scripts-history.png)
+
+### 🪄 Playground — Visual Automation Builder (empty state)
+> Select a template or add steps manually — no coding required
+![Playground Empty](docs/screenshots/playground-empty.png)
+
+### 🪄 Playground — Steps configured (Login Flow template)
+> Each step = one browser action. Pick the action, select the target element, add a comment.
+![Playground Steps](docs/screenshots/playground-steps.png)
+
+### 🪄 Playground — Generated Code
+> Click "Generate & Insert Code" → clean, commented JavaScript appears in the editor
+![Playground Generated](docs/screenshots/playground-generated.png)
+
 ### Tasks — Scheduler with run/stop controls
 ![Tasks](docs/screenshots/tasks.png)
+
+### Logs — Full log history with filtering
+![Logs](docs/screenshots/logs.png)
 
 ### Settings — Browser engine, headless toggle, proxy
 ![Settings](docs/screenshots/settings.png)
@@ -28,12 +46,52 @@ Built with **Playwright stealth** (bypasses CAPTCHAs & anti-bot systems), a **VS
 |---|---|
 | 🕵️ **Anti-Detect Browser** | Playwright + stealth plugin — randomized fingerprints, user agents, viewports, canvas noise |
 | 📝 **Monaco Script Editor** | Full VS Code editor in the browser — JS syntax highlighting, autocomplete |
+| 🪄 **Visual Playground** | Build automation flows visually — 24 actions, 7 selector methods, live preview, 4 templates |
+| 🕐 **Version History** | Auto-snapshot on every save — restore any previous version with one click |
+| 📋 **Duplicate Script** | Clone any script instantly as a starting point |
 | ⏰ **Task Scheduler** | Run scripts immediately or on a cron schedule |
 | 📡 **Live Log Streaming** | Real-time logs via Socket.IO — color-coded info/warn/error/success |
 | 🖼️ **Screenshot API** | Capture page screenshots on demand |
 | 🗄️ **SQLite Storage** | Zero-setup persistent storage — no database server needed |
 | 🐳 **Docker Ready** | One command to run everything |
 | 🔌 **Full REST API** | Control everything programmatically |
+
+---
+
+## 🪄 Script Playground
+
+The Playground lets you **build browser automation visually** — no JavaScript knowledge needed.
+
+**How it works:**
+1. Go to **Scripts** → select or create a script → click the **Playground** tab
+2. Add steps by clicking **+ Add Step** (or pick a ready-made template)
+3. For each step, choose an **action** and set the **target element**
+4. Click **Generate & Insert Code** — clean JS appears in the Code editor
+5. Review, edit if needed, then **Save**
+
+**24 actions across 5 groups:**
+
+| Group | Actions |
+|---|---|
+| 🌐 Navigation | Go to URL, Go Back, Reload, Wait for URL |
+| 🖱️ Mouse | Click, Double Click, Hover, Scroll to Element, Scroll Page |
+| ⌨️ Input | Type into Input, Press Key, Select Dropdown, Check/Uncheck, Clear, Upload File |
+| ⏳ Wait | Wait for Element, Wait Until Hidden, Sleep, Wait Network Idle |
+| 📊 Data | Read Text, Get Attribute, Screenshot, Log Message |
+
+**7 element targeting methods:**
+
+| Method | Example input | Builds |
+|---|---|---|
+| CSS | `.btn-primary` | `.btn-primary` |
+| ID | `login-btn` | `#login-btn` |
+| Text Content | `Sign In` | `text=Sign In` |
+| data-testid | `submit-button` | `[data-testid="submit-button"]` |
+| Placeholder | `Enter email` | `[placeholder="Enter email"]` |
+| XPath | `//button[text()="Go"]` | `xpath=//button[text()="Go"]` |
+| ARIA Role | `button:Submit` | `role=button[name="Submit"]` |
+
+> 💡 A **live selector preview** shows the exact Playwright selector as you type.
 
 ---
 
@@ -252,10 +310,14 @@ stealth-browser/
     └── src/
         ├── pages/
         │   ├── Dashboard.jsx        # Stats + live output
-        │   ├── Scripts.jsx          # Monaco editor
+        │   ├── Scripts.jsx          # Monaco editor + Playground tabs
         │   ├── Tasks.jsx            # Task manager
         │   ├── Logs.jsx             # Log history
         │   └── Settings.jsx         # Config
+        ├── components/
+        │   ├── ScriptPlayground.jsx # 🪄 Visual automation builder
+        │   ├── VersionHistory.jsx   # 🕐 Version history + restore panel
+        │   └── __tests__/           # 38 unit tests
         ├── hooks/useSocket.js       # Socket.IO hook
         └── utils/api.js             # Axios client
 ```

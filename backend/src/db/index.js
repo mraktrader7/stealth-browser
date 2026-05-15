@@ -36,6 +36,19 @@ const SCHEMA = `
     updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
+  -- Version history: every save creates a new row here
+  CREATE TABLE IF NOT EXISTS script_versions (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    script_id  TEXT NOT NULL,
+    content    TEXT NOT NULL DEFAULT '',
+    label      TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (script_id) REFERENCES scripts(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_script_versions_script_id ON script_versions(script_id);
+  CREATE INDEX IF NOT EXISTS idx_script_versions_created_at ON script_versions(created_at);
+
   CREATE TABLE IF NOT EXISTS tasks (
     id              TEXT PRIMARY KEY,
     name            TEXT NOT NULL,
@@ -137,6 +150,73 @@ const scripts = {
     return getDb()
       .prepare('DELETE FROM scripts WHERE id = ?')
       .run(id);
+  },
+};
+
+// ─── Script Versions ──────────────────────────────────────────────────────────
+const scriptVersions = {
+  /**
+   * List all versions for a script (newest first).
+   * Returns lightweight rows (no content) for the list view.
+   */
+  list(scriptId) {
+    return getDb()
+      .prepare(
+        `SELECT id, script_id, label, created_at
+         FROM script_versions
+         WHERE script_id = ?
+         ORDER BY created_at DESC`
+      )
+      .all(scriptId);
+  },
+
+  /**
+   * Get a single version including its content.
+   */
+  get(id) {
+    return getDb()
+      .prepare('SELECT * FROM script_versions WHERE id = ?')
+      .get(id);
+  },
+
+  /**
+   * Save a new version snapshot.
+   */
+  save(scriptId, content, label = '') {
+    const now = new Date().toISOString();
+    const result = getDb()
+      .prepare(
+        `INSERT INTO script_versions (script_id, content, label, created_at)
+         VALUES (?, ?, ?, ?)`
+      )
+      .run(scriptId, content, label, now);
+    return scriptVersions.get(result.lastInsertRowid);
+  },
+
+  /**
+   * Delete a single version.
+   */
+  delete(id) {
+    return getDb()
+      .prepare('DELETE FROM script_versions WHERE id = ?')
+      .run(id);
+  },
+
+  /**
+   * Keep only the N most recent versions for a script (prune old ones).
+   */
+  prune(scriptId, keepCount = 20) {
+    return getDb()
+      .prepare(
+        `DELETE FROM script_versions
+         WHERE script_id = ? AND id NOT IN (
+           SELECT id FROM script_versions
+           WHERE script_id = ?
+           ORDER BY created_at DESC
+           LIMIT ?
+         )`
+      )
+      .run(scriptId, scriptId, keepCount);
   },
 };
 
@@ -256,6 +336,7 @@ module.exports = {
   close,
   getDb,
   scripts,
+  scriptVersions,
   tasks,
   logs: logsDb,
 };

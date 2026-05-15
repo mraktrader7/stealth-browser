@@ -7,6 +7,36 @@ const db = require('../db');
 
 const router = express.Router();
 
+// ─── Version History Endpoints ────────────────────────────────────────────────
+
+// GET /api/scripts/:id/versions — list all versions (lightweight, no content)
+router.get('/:id/versions', (req, res) => {
+  const script = db.scripts.findById(req.params.id);
+  if (!script) return res.status(404).json({ error: 'Script not found' });
+
+  const versions = db.scriptVersions.list(req.params.id);
+  res.json({ data: versions, total: versions.length });
+});
+
+// GET /api/scripts/:id/versions/:versionId — get one version with content
+router.get('/:id/versions/:versionId', (req, res) => {
+  const version = db.scriptVersions.get(req.params.versionId);
+  if (!version || version.script_id !== req.params.id) {
+    return res.status(404).json({ error: 'Version not found' });
+  }
+  res.json({ data: version });
+});
+
+// DELETE /api/scripts/:id/versions/:versionId — delete a version
+router.delete('/:id/versions/:versionId', (req, res) => {
+  const version = db.scriptVersions.get(req.params.versionId);
+  if (!version || version.script_id !== req.params.id) {
+    return res.status(404).json({ error: 'Version not found' });
+  }
+  db.scriptVersions.delete(req.params.versionId);
+  res.json({ message: 'Version deleted', id: req.params.versionId });
+});
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function validateScript(body, requireAll = false) {
@@ -62,6 +92,11 @@ router.post('/', (req, res) => {
     description,
   });
 
+  // Save initial version
+  if (content.trim()) {
+    db.scriptVersions.save(script.id, content, 'Initial version');
+  }
+
   res.status(201).json({ data: script, message: 'Script created' });
 });
 
@@ -77,7 +112,18 @@ router.put('/:id', (req, res) => {
     return res.status(400).json({ error: 'Validation failed', details: errors });
   }
 
-  const { name, content, description } = req.body;
+  const { name, content, description, versionLabel } = req.body;
+
+  // Auto-snapshot: if content changed, save old version before overwriting
+  if (content !== undefined && content !== existing.content) {
+    db.scriptVersions.save(
+      existing.id,
+      existing.content,
+      versionLabel || `Saved at ${new Date().toLocaleTimeString()}`
+    );
+    // Keep at most 20 versions per script
+    db.scriptVersions.prune(existing.id, 20);
+  }
 
   const updated = db.scripts.update(req.params.id, {
     name: name !== undefined ? name.trim() : undefined,

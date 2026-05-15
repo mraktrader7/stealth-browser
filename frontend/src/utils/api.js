@@ -42,6 +42,10 @@ export const scripts = {
   create: (data) => instance.post('/scripts', data),
   update: (id, data) => instance.put(`/scripts/${id}`, data),
   delete: (id) => instance.delete(`/scripts/${id}`),
+  // Version history
+  getVersions: (id) => instance.get(`/scripts/${id}/versions`),
+  getVersion: (id, versionId) => instance.get(`/scripts/${id}/versions/${versionId}`),
+  deleteVersion: (id, versionId) => instance.delete(`/scripts/${id}/versions/${versionId}`),
 }
 
 // ─── Tasks ─────────────────────────────────────────────────────────────────────

@@ -15,11 +15,12 @@ import React, { useEffect, useState, useCallback, useRef } from 'react'
 import Editor from '@monaco-editor/react'
 import {
   Plus, Save, Trash2, Code2, FileCode, X, Loader2,
-  AlertCircle, CheckCircle2, Wand2, LayoutGrid
+  AlertCircle, CheckCircle2, Wand2, LayoutGrid, History, Copy
 } from 'lucide-react'
 import { scripts as scriptsApi } from '../utils/api.js'
 import { formatDistanceToNow } from 'date-fns'
 import ScriptPlayground from '../components/ScriptPlayground.jsx'
+import VersionHistory from '../components/VersionHistory.jsx'
 
 // ─── Default template shown for new scripts ───────────────────────────────────
 const DEFAULT_TEMPLATE = `/**
@@ -126,7 +127,9 @@ export default function Scripts() {
   const [loading, setLoading]         = useState(true)
   const [saving, setSaving]           = useState(false)
   const [deleting, setDeleting]       = useState(false)
+  const [duplicating, setDuplicating] = useState(false)
   const [showCreate, setShowCreate]   = useState(false)
+  const [showHistory, setShowHistory] = useState(false)
   const [toast, setToast]             = useState(null)
   const [newScript, setNewScript]     = useState({ name: '', description: '', content: DEFAULT_TEMPLATE })
   const [creating, setCreating]       = useState(false)
@@ -223,6 +226,25 @@ export default function Scripts() {
       setCreating(false)
     }
   }, [newScript, showToast, loadScripts])
+
+  // ── Duplicate script ──────────────────────────────────────────────────────
+  const handleDuplicate = useCallback(async () => {
+    if (!selected) return
+    setDuplicating(true)
+    try {
+      await scriptsApi.create({
+        name: `${selected.name} (copy)`,
+        description: selected.description,
+        content: code,
+      })
+      showToast('success', `Script duplicated as "${selected.name} (copy)"`)
+      await loadScripts()
+    } catch (err) {
+      showToast('error', `Duplicate failed: ${err.message}`)
+    } finally {
+      setDuplicating(false)
+    }
+  }, [selected, code, showToast, loadScripts])
 
   // ── Playground → insert generated code into editor ─────────────────────────
   const handlePlaygroundCode = useCallback((generated) => {
@@ -325,6 +347,32 @@ export default function Scripts() {
               </div>
 
               <div className="flex items-center gap-2">
+                {/* Version History toggle */}
+                <button
+                  onClick={() => setShowHistory((p) => !p)}
+                  className={[
+                    'flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-all',
+                    showHistory
+                      ? 'bg-violet-600/20 border-violet-500/30 text-violet-300'
+                      : 'text-slate-400 hover:text-slate-200 hover:bg-slate-700 border-transparent',
+                  ].join(' ')}
+                  title="Version history"
+                >
+                  <History className="w-3.5 h-3.5" />
+                  History
+                </button>
+
+                {/* Duplicate */}
+                <button
+                  onClick={handleDuplicate}
+                  disabled={duplicating}
+                  className="btn-secondary text-xs"
+                  title="Duplicate script"
+                >
+                  {duplicating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Copy className="w-3.5 h-3.5" />}
+                  Duplicate
+                </button>
+
                 <button onClick={handleDelete} disabled={deleting} className="btn-danger text-xs">
                   {deleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
                   Delete
@@ -338,29 +386,46 @@ export default function Scripts() {
 
             {/* ── Code Tab ── */}
             {activeTab === 'code' && (
-              <div className="flex-1 overflow-hidden">
-                <Editor
-                  height="100%"
-                  defaultLanguage="javascript"
-                  theme="vs-dark"
-                  value={code}
-                  onChange={(val) => setCode(val ?? '')}
-                  onMount={(editor) => { editorRef.current = editor }}
-                  options={{
-                    fontSize: 13,
-                    fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-                    fontLigatures: true,
-                    minimap: { enabled: true },
-                    scrollBeyondLastLine: false,
-                    wordWrap: 'on',
-                    lineNumbers: 'on',
-                    renderLineHighlight: 'gutter',
-                    smoothScrolling: true,
-                    cursorBlinking: 'smooth',
-                    tabSize: 2,
-                    padding: { top: 16, bottom: 16 },
-                  }}
-                />
+              <div className="flex flex-1 overflow-hidden">
+                {/* Monaco Editor */}
+                <div className="flex-1 overflow-hidden">
+                  <Editor
+                    height="100%"
+                    defaultLanguage="javascript"
+                    theme="vs-dark"
+                    value={code}
+                    onChange={(val) => setCode(val ?? '')}
+                    onMount={(editor) => { editorRef.current = editor }}
+                    options={{
+                      fontSize: 13,
+                      fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+                      fontLigatures: true,
+                      minimap: { enabled: true },
+                      scrollBeyondLastLine: false,
+                      wordWrap: 'on',
+                      lineNumbers: 'on',
+                      renderLineHighlight: 'gutter',
+                      smoothScrolling: true,
+                      cursorBlinking: 'smooth',
+                      tabSize: 2,
+                      padding: { top: 16, bottom: 16 },
+                    }}
+                  />
+                </div>
+
+                {/* Version History Panel */}
+                {showHistory && selected && (
+                  <div className="w-96 flex-shrink-0 overflow-hidden">
+                    <VersionHistory
+                      scriptId={selected.id}
+                      onRestore={(restoredCode) => {
+                        setCode(restoredCode)
+                        showToast('success', 'Version restored — review it and save when ready.')
+                      }}
+                      onClose={() => setShowHistory(false)}
+                    />
+                  </div>
+                )}
               </div>
             )}
 
