@@ -111,7 +111,7 @@ class ExecutorService {
    * @param {number}  [opts.timeoutMs]  Execution timeout in ms
    * @returns {Promise<{ success: boolean, result: any, error: string|null }>}
    */
-  async execute({ taskId, scriptCode, headless = true, proxy, timeoutMs = DEFAULT_TIMEOUT_MS }) {
+  async execute({ taskId, scriptCode, headless = true, proxy, profileId, timeoutMs = DEFAULT_TIMEOUT_MS }) {
     if (this.running.has(taskId)) {
       throw new Error(`Task ${taskId} is already running`);
     }
@@ -141,8 +141,8 @@ class ExecutorService {
     let timeoutHandle;
 
     try {
-      // Launch browser
-      const { browserId: bid } = await browserService.launch({ headless, proxy });
+      // Launch browser — pass profileId to enable persistent sessions
+      const { browserId: bid } = await browserService.launch({ headless, proxy, profileId });
       browserId = bid;
       this.running.get(taskId).browserId = browserId;
 

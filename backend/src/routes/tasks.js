@@ -146,7 +146,7 @@ router.post('/:id/run', async (req, res) => {
     return res.status(422).json({ error: 'Script has no content to execute' });
   }
 
-  const { headless = true, proxy, timeoutMs } = req.body || {};
+  const { headless = true, proxy, profileId, timeoutMs } = req.body || {};
 
   // Respond immediately; execution happens in background
   res.json({ message: 'Task started', taskId: task.id });
@@ -158,6 +158,7 @@ router.post('/:id/run', async (req, res) => {
       scriptCode: task.script_content,
       headless,
       proxy,
+      profileId,   // ← persistent profile support
       timeoutMs,
     })
     .catch((err) => {

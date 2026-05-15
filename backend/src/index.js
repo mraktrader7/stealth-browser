@@ -15,6 +15,7 @@ const scriptsRouter = require('./routes/scripts');
 const tasksRouter = require('./routes/tasks');
 const browserRouter = require('./routes/browser');
 const logsRouter = require('./routes/logs');
+const profilesRouter = require('./routes/profiles');
 
 const PORT = process.env.PORT || 3001;
 const CORS_ORIGIN = process.env.CORS_ORIGIN || 'http://localhost:5173';
@@ -50,6 +51,7 @@ app.use('/api/scripts', scriptsRouter);
 app.use('/api/tasks', tasksRouter);
 app.use('/api/browser', browserRouter);
 app.use('/api/logs', logsRouter);
+app.use('/api/profiles', profilesRouter);
 
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });

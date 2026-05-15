@@ -49,7 +49,7 @@ export const tasks = {
   getAll: () => instance.get('/tasks'),
   getOne: (id) => instance.get(`/tasks/${id}`),
   create: (data) => instance.post('/tasks', data),
-  run: (id) => instance.post(`/tasks/${id}/run`),
+  run: (id, opts = {}) => instance.post(`/tasks/${id}/run`, opts),
   stop: (id) => instance.post(`/tasks/${id}/stop`),
   delete: (id) => instance.delete(`/tasks/${id}`),
 }
@@ -67,6 +67,13 @@ export const browser = {
   screenshot: (sessionId, options = {}) =>
     instance.post(`/browser/sessions/${sessionId}/screenshot`, options),
   close: (sessionId) => instance.delete(`/browser/sessions/${sessionId}`),
+}
+
+// ─── Profiles ─────────────────────────────────────────────────────────────────
+export const profiles = {
+  getAll: () => instance.get('/profiles'),
+  create: (data) => instance.post('/profiles', data),
+  delete: (id) => instance.delete(`/profiles/${id}`),
 }
 
 export default instance
