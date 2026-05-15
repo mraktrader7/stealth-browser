@@ -8,20 +8,21 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@monaco-editor/react": "^4.6.0",
+    "axios": "^1.6.2",
+    "date-fns": "^3.0.0",
+    "lucide-react": "^0.294.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-router-dom": "^6.20.1",
-    "socket.io-client": "^4.7.2",
-    "@monaco-editor/react": "^4.6.0",
-    "axios": "^1.6.2",
-    "lucide-react": "^0.294.0",
-    "date-fns": "^3.0.0"
+    "socket.io-client": "^4.7.2"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.2.1",
-    "vite": "^5.0.4",
-    "tailwindcss": "^3.3.6",
     "autoprefixer": "^10.4.16",
-    "postcss": "^8.4.32"
+    "jest": "^30.4.2",
+    "postcss": "^8.4.32",
+    "tailwindcss": "^3.3.6",
+    "vite": "^5.0.4"
   }
 }

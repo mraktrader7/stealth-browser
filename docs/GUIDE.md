@@ -10,11 +10,12 @@
 2. [Staying Logged In (Persistent Profiles)](#2-staying-logged-in-persistent-profiles)
 3. [Your First Automation — Step by Step](#3-your-first-automation--step-by-step)
 4. [Writing Scripts](#4-writing-scripts)
-5. [Common Automation Recipes](#5-common-automation-recipes)
-6. [Scheduling with Cron](#6-scheduling-with-cron)
-7. [Understanding Live Logs](#7-understanding-live-logs)
-8. [Anti-Detect Explained](#8-anti-detect-explained)
-9. [Tips & Best Practices](#9-tips--best-practices)
+5. [🧪 Script Playground — Visual Builder](#5-script-playground--visual-builder)
+6. [Common Automation Recipes](#6-common-automation-recipes)
+7. [Scheduling with Cron](#7-scheduling-with-cron)
+8. [Understanding Live Logs](#8-understanding-live-logs)
+9. [Anti-Detect Explained](#9-anti-detect-explained)
+10. [Tips & Best Practices](#10-tips--best-practices)
 
 ---
 
@@ -347,7 +348,167 @@ await sleep(2000);
 
 ---
 
-## 5. Common Automation Recipes
+---
+
+## 5. Script Playground — Visual Builder
+
+The **Playground** is a visual, no-typing-required way to build automation workflows.
+Instead of writing JavaScript, you build a list of steps — each step is one browser action.
+When you're done, click **Generate & Insert Code** and the JavaScript appears in the Code editor.
+
+### How to open it
+
+1. Click **Scripts** in the sidebar
+2. Select (or create) a script
+3. Click the **Playground** tab next to the Code tab
+
+---
+
+### Workflow
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Scripts page                                               │
+│  ┌───────────────┐   ┌──────────────────────────────────┐  │
+│  │ Script list   │   │  [ Code ]  [ 🪄 Playground ]      │  │
+│  │               │   │                                   │  │
+│  │  my-script    │   │  Step 1: Go to URL                │  │
+│  │  login-flow   │   │  ┌─────────────────────────────┐  │  │
+│  │  scraper      │   │  │ Action:  Go to URL           │  │  │
+│  │               │   │  │ URL:     https://example.com │  │  │
+│  │  [+ New]      │   │  │ Comment: Open the site       │  │  │
+│  └───────────────┘   │  └─────────────────────────────┘  │  │
+│                      │                                   │  │
+│                      │  Step 2: Click Element            │  │
+│                      │  ┌─────────────────────────────┐  │  │
+│                      │  │ Action:  Click               │  │  │
+│                      │  │ Target:  [CSS] button.login  │  │  │
+│                      │  │ Comment: Click login button  │  │  │
+│                      │  └─────────────────────────────┘  │  │
+│                      │                                   │  │
+│                      │  [+ Add Step]  [🪄 Generate Code] │  │
+│                      └──────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+### Available Actions
+
+| Group      | Action               | What it does                           |
+|------------|----------------------|----------------------------------------|
+| Navigation | Go to URL            | `page.goto(url)`                       |
+| Navigation | Go Back              | `page.goBack()`                        |
+| Navigation | Reload Page          | `page.reload()`                        |
+| Navigation | Wait for URL         | `page.waitForURL(pattern)`             |
+| Mouse      | Click Element        | `page.click(selector)`                 |
+| Mouse      | Double Click         | `page.dblclick(selector)`              |
+| Mouse      | Hover Element        | `page.hover(selector)`                 |
+| Mouse      | Scroll To Element    | Scrolls element into viewport          |
+| Mouse      | Scroll Page          | `window.scrollBy(0, px)`               |
+| Input      | Type into Input      | `page.fill(selector, value)`           |
+| Input      | Press Key            | `page.press(selector, key)`            |
+| Input      | Select Dropdown      | `page.selectOption(selector, value)`   |
+| Input      | Check / Uncheck      | `page.check/uncheck(selector)`         |
+| Input      | Clear Input          | Clears the field                       |
+| Input      | Upload File          | `page.setInputFiles(selector, path)`   |
+| Wait       | Wait for Element     | `page.waitForSelector(selector)`       |
+| Wait       | Wait Until Hidden    | Waits until element disappears         |
+| Wait       | Sleep (ms)           | `await sleep(ms)`                      |
+| Wait       | Wait Network Idle    | `page.waitForLoadState('networkidle')` |
+| Data       | Read Text            | `page.textContent(selector)` + log     |
+| Data       | Get Attribute        | `page.getAttribute(selector, attr)`    |
+| Data       | Take Screenshot      | `page.screenshot({path})`              |
+| Data       | Log Message          | `log.info(message)`                    |
+
+---
+
+### Targeting Elements — Selector Methods
+
+Every step that acts on an element asks *how* to find that element.
+You pick the method from a dropdown, then enter just the relevant value.
+
+| Method          | You enter              | Builds this Playwright selector                 | Best for                        |
+|-----------------|------------------------|-------------------------------------------------|---------------------------------|
+| **CSS**         | `.btn-primary`         | `.btn-primary`                                  | Anything with a class or tag    |
+| **ID**          | `login-btn`            | `#login-btn`                                    | Elements with a known `id`      |
+| **Text Content**| `Sign In`              | `text=Sign In`                                  | Buttons, links, labels          |
+| **data-testid** | `submit-button`        | `[data-testid="submit-button"]`                 | React / Next.js apps            |
+| **Placeholder** | `Enter your email`     | `[placeholder="Enter your email"]`              | Input fields                    |
+| **XPath**       | `//button[text()="Go"]`| `xpath=//button[text()="Go"]`                   | Complex or deeply nested HTML   |
+| **ARIA Role**   | `button:Submit`        | `role=button[name="Submit"]`                    | Accessible apps, testing        |
+
+> 💡 **Tip:** The Playground shows a live preview of the built selector as you type, so you always know exactly what will be passed to Playwright.
+
+---
+
+### How to Find the Right Selector
+
+1. **Open DevTools** in any browser (F12)
+2. Right-click the element → **Inspect**
+3. Look at the element's:
+   - `id` attribute → use **ID** method
+   - `class` attribute → use **CSS** method with `.classname`
+   - `data-testid` attribute → use **data-testid** method
+   - visible text → use **Text Content** method
+4. Or right-click in DevTools → **Copy** → **Copy selector** (gives you a CSS path)
+
+---
+
+### Step Comments
+
+Every step has an optional **Comment** field.
+Comments appear above each line in the generated code as `// Step N: your note`.
+
+```javascript
+// Step 1: Open the login page
+await page.goto('https://example.com/login', { waitUntil: 'domcontentloaded' });
+
+// Step 2: Enter email address
+await page.fill('[placeholder="Enter your email"]', 'user@test.com');
+
+// Step 3: Submit the form
+await page.click('text=Sign In');
+```
+
+This makes your generated code self-documenting — you know exactly why each line exists.
+
+---
+
+### Quick Start Templates
+
+The Playground offers 4 templates to start from:
+
+| Template        | Steps included                              |
+|-----------------|---------------------------------------------|
+| 🔐 Login Flow   | goto → fill email → fill password → submit → waitForURL |
+| 🔍 Search & Scrape | goto → fill search → press Enter → wait for results → getText |
+| 📋 Form Fill    | goto → fill name → fill email → fill message → click submit → waitForSelector |
+| 📸 Screenshot   | goto → waitForNetIdle → screenshot → log    |
+
+---
+
+### Reordering Steps
+
+- Use the **↑ / ↓** arrow buttons on each step card to reorder
+- Use the small **+** button between cards to insert a step in the middle
+
+---
+
+### Generating Code
+
+When you're happy with your steps:
+
+1. Click **🪄 Generate & Insert Code**
+2. The Code tab opens automatically with the generated JavaScript
+3. Review and edit as needed
+4. Click **Save**
+
+The generated code is fully compatible with the manual editor — it uses the same Playwright API and the same `log`, `sleep`, and `page` globals.
+
+---
+
+## 6. Common Automation Recipes
 
 ### 📧 Login and scrape private data
 
@@ -534,7 +695,7 @@ if (isLoggedIn) {
 
 ---
 
-## 6. Scheduling with Cron
+## 7. Scheduling with Cron
 
 Set a **Cron Expression** when creating a task to run it automatically.
 
@@ -570,7 +731,7 @@ Set a **Cron Expression** when creating a task to run it automatically.
 
 ---
 
-## 7. Understanding Live Logs
+## 8. Understanding Live Logs
 
 Every script has access to the `log` function which streams messages to your dashboard in real time.
 
@@ -605,7 +766,7 @@ log.success('Done ✓');
 
 ---
 
-## 8. Anti-Detect Explained
+## 9. Anti-Detect Explained
 
 StealthBrowser applies these protections on every launch to avoid detection:
 
@@ -638,7 +799,7 @@ Some sites use advanced services (Cloudflare, DataDome, PerimeterX). Options:
 
 ---
 
-## 9. Tips & Best Practices
+## 10. Tips & Best Practices
 
 ### ✅ Always do
 

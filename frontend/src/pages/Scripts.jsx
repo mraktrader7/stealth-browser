@@ -1,45 +1,60 @@
-import React, { useEffect, useState, useCallback } from 'react'
+/**
+ * Scripts.jsx
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Script editor page with two modes:
+ *   • Code tab     — Monaco editor for writing/editing raw JavaScript
+ *   • Playground tab — Visual step builder (ScriptPlayground)
+ *
+ * Key changes:
+ *   - Integrated ScriptPlayground; "Generate & Insert Code" inserts into editor
+ *   - Fixed content vs code field mismatch (DB uses `content`, old UI used `code`)
+ *   - Added tab switcher: Code | Playground
+ */
+
+import React, { useEffect, useState, useCallback, useRef } from 'react'
 import Editor from '@monaco-editor/react'
 import {
-  Plus, Save, Trash2, Code2, FileCode, X, Loader2, AlertCircle, CheckCircle2
+  Plus, Save, Trash2, Code2, FileCode, X, Loader2,
+  AlertCircle, CheckCircle2, Wand2, LayoutGrid
 } from 'lucide-react'
 import { scripts as scriptsApi } from '../utils/api.js'
 import { formatDistanceToNow } from 'date-fns'
+import ScriptPlayground from '../components/ScriptPlayground.jsx'
 
+// ─── Default template shown for new scripts ───────────────────────────────────
 const DEFAULT_TEMPLATE = `/**
  * StealthBrowser Script
- * Available globals: browser, page, log, params
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Available globals (no imports needed):
  *
- * browser — Playwright browser instance
- * page    — current Page instance
- * log(msg, level?) — emit a log entry (level: info|warn|error|success)
- * params  — task parameters object
+ *   page        — Playwright Page (browser tab)
+ *   log(msg)    — stream a log line to the dashboard
+ *   log.info / log.warn / log.error / log.success
+ *   sleep(ms)   — await sleep(2000)  →  wait 2 seconds
+ *   console.log — same as log.info
+ *   fetch(url)  — Node built-in fetch for API calls
+ *
+ * Tip: Use the Playground tab to build your flow visually,
+ *      then generate the code and edit it here.
  */
 
-async function run({ page, log }) {
-  log('Navigating to example.com…', 'info')
+// Navigate to a page
+await page.goto('https://example.com', { waitUntil: 'domcontentloaded' });
 
-  await page.goto('https://example.com', { waitUntil: 'domcontentloaded' })
+// Read the page title
+const title = await page.title();
+log.success(\`Page title: "\${title}"\`);
 
-  const title = await page.title()
-  log(\`Page title: "\${title}"\`, 'success')
+// Find all links
+const links = await page.$$eval('a', (els) =>
+  els.map((a) => ({ text: a.textContent.trim(), href: a.href }))
+);
+log.info(\`Found \${links.length} link(s)\`);
 
-  const heading = await page.$eval('h1', (el) => el.textContent.trim()).catch(() => null)
-  if (heading) {
-    log(\`Found heading: "\${heading}"\`, 'info')
-  }
-
-  const links = await page.$$eval('a', (els) => els.map((a) => ({ text: a.textContent.trim(), href: a.href })))
-  log(\`Found \${links.length} link(s) on the page\`, 'info')
-  links.forEach((link) => log(\`  → \${link.text}: \${link.href}\`, 'debug'))
-
-  log('Script completed successfully', 'success')
-  return { title, heading, links }
-}
-
-module.exports = { run }
+log.success('Script completed!');
 `
 
+// ─── Toast notification ───────────────────────────────────────────────────────
 function Toast({ type, message, onClose }) {
   useEffect(() => {
     const t = setTimeout(onClose, 3500)
@@ -62,6 +77,7 @@ function Toast({ type, message, onClose }) {
   )
 }
 
+// ─── Generic Modal wrapper ────────────────────────────────────────────────────
 function Modal({ title, onClose, children }) {
   useEffect(() => {
     const handler = (e) => { if (e.key === 'Escape') onClose() }
@@ -84,6 +100,25 @@ function Modal({ title, onClose, children }) {
   )
 }
 
+// ─── Tab button ───────────────────────────────────────────────────────────────
+function TabBtn({ active, onClick, icon: Icon, label }) {
+  return (
+    <button
+      onClick={onClick}
+      className={[
+        'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all',
+        active
+          ? 'bg-sky-600/20 text-sky-400 border border-sky-500/30'
+          : 'text-slate-400 hover:text-slate-200 hover:bg-slate-700 border border-transparent',
+      ].join(' ')}
+    >
+      <Icon className="w-3.5 h-3.5" />
+      {label}
+    </button>
+  )
+}
+
+// ─── Main Page ────────────────────────────────────────────────────────────────
 export default function Scripts() {
   const [scriptList, setScriptList]   = useState([])
   const [selected, setSelected]       = useState(null)
@@ -93,11 +128,15 @@ export default function Scripts() {
   const [deleting, setDeleting]       = useState(false)
   const [showCreate, setShowCreate]   = useState(false)
   const [toast, setToast]             = useState(null)
-  const [newScript, setNewScript]     = useState({ name: '', description: '', code: DEFAULT_TEMPLATE })
+  const [newScript, setNewScript]     = useState({ name: '', description: '', content: DEFAULT_TEMPLATE })
   const [creating, setCreating]       = useState(false)
+  const [activeTab, setActiveTab]     = useState('code') // 'code' | 'playground'
+
+  const editorRef = useRef(null)
 
   const showToast = useCallback((type, message) => setToast({ type, message }), [])
 
+  // ── Load scripts list ──────────────────────────────────────────────────────
   const loadScripts = useCallback(async () => {
     setLoading(true)
     try {
@@ -112,23 +151,31 @@ export default function Scripts() {
 
   useEffect(() => { loadScripts() }, [loadScripts])
 
+  // ── Select a script to edit ────────────────────────────────────────────────
   const handleSelect = useCallback(async (script) => {
     try {
       const full = await scriptsApi.getOne(script.id)
       const data = full?.data ?? full
       setSelected(data)
-      setCode(data.code ?? '')
+      // DB field is "content"; handle either for compatibility
+      setCode(data.content ?? data.code ?? '')
     } catch (_) {
       setSelected(script)
-      setCode(script.code ?? '')
+      setCode(script.content ?? script.code ?? '')
     }
   }, [])
 
+  // ── Save ───────────────────────────────────────────────────────────────────
   const handleSave = useCallback(async () => {
     if (!selected) return
     setSaving(true)
     try {
-      await scriptsApi.update(selected.id, { ...selected, code })
+      // Always send `content` to match DB schema
+      await scriptsApi.update(selected.id, {
+        name: selected.name,
+        description: selected.description,
+        content: code,
+      })
       showToast('success', 'Script saved successfully')
       await loadScripts()
     } catch (err) {
@@ -138,6 +185,7 @@ export default function Scripts() {
     }
   }, [selected, code, showToast, loadScripts])
 
+  // ── Delete ─────────────────────────────────────────────────────────────────
   const handleDelete = useCallback(async () => {
     if (!selected) return
     if (!confirm(`Delete script "${selected.name}"? This cannot be undone.`)) return
@@ -155,14 +203,19 @@ export default function Scripts() {
     }
   }, [selected, showToast, loadScripts])
 
+  // ── Create ─────────────────────────────────────────────────────────────────
   const handleCreate = useCallback(async () => {
     if (!newScript.name.trim()) return
     setCreating(true)
     try {
-      await scriptsApi.create(newScript)
+      await scriptsApi.create({
+        name: newScript.name.trim(),
+        description: newScript.description,
+        content: newScript.content,
+      })
       showToast('success', `Script "${newScript.name}" created`)
       setShowCreate(false)
-      setNewScript({ name: '', description: '', code: DEFAULT_TEMPLATE })
+      setNewScript({ name: '', description: '', content: DEFAULT_TEMPLATE })
       await loadScripts()
     } catch (err) {
       showToast('error', `Create failed: ${err.message}`)
@@ -171,11 +224,18 @@ export default function Scripts() {
     }
   }, [newScript, showToast, loadScripts])
 
+  // ── Playground → insert generated code into editor ─────────────────────────
+  const handlePlaygroundCode = useCallback((generated) => {
+    setCode(generated)
+    setActiveTab('code')
+    showToast('success', 'Code generated! Review it in the Code tab, then save.')
+  }, [showToast])
+
   return (
     <div className="flex h-full">
       {toast && <Toast type={toast.type} message={toast.message} onClose={() => setToast(null)} />}
 
-      {/* Script List Sidebar */}
+      {/* ── Script List Sidebar ── */}
       <div className="w-72 flex-shrink-0 border-r border-slate-800 flex flex-col">
         <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800">
           <div className="flex items-center gap-2">
@@ -234,64 +294,85 @@ export default function Scripts() {
         </div>
       </div>
 
-      {/* Editor Area */}
+      {/* ── Main Editor Area ── */}
       <div className="flex-1 flex flex-col overflow-hidden">
         {selected ? (
           <>
-            {/* Toolbar */}
+            {/* ── Toolbar ── */}
             <div className="flex items-center justify-between px-5 py-3 border-b border-slate-800 bg-slate-900/50">
-              <div>
-                <h2 className="text-sm font-semibold text-slate-200">{selected.name}</h2>
-                {selected.description && (
-                  <p className="text-xs text-slate-500 mt-0.5">{selected.description}</p>
-                )}
+              <div className="flex items-center gap-3">
+                <div>
+                  <h2 className="text-sm font-semibold text-slate-200">{selected.name}</h2>
+                  {selected.description && (
+                    <p className="text-xs text-slate-500 mt-0.5">{selected.description}</p>
+                  )}
+                </div>
+                {/* Tab switcher */}
+                <div className="flex items-center gap-1 ml-2">
+                  <TabBtn
+                    active={activeTab === 'code'}
+                    onClick={() => setActiveTab('code')}
+                    icon={Code2}
+                    label="Code"
+                  />
+                  <TabBtn
+                    active={activeTab === 'playground'}
+                    onClick={() => setActiveTab('playground')}
+                    icon={Wand2}
+                    label="Playground"
+                  />
+                </div>
               </div>
+
               <div className="flex items-center gap-2">
-                <button
-                  onClick={handleDelete}
-                  disabled={deleting}
-                  className="btn-danger text-xs"
-                >
+                <button onClick={handleDelete} disabled={deleting} className="btn-danger text-xs">
                   {deleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
                   Delete
                 </button>
-                <button
-                  onClick={handleSave}
-                  disabled={saving}
-                  className="btn-primary text-xs"
-                >
+                <button onClick={handleSave} disabled={saving} className="btn-primary text-xs">
                   {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
                   Save
                 </button>
               </div>
             </div>
 
-            {/* Monaco Editor */}
-            <div className="flex-1 overflow-hidden">
-              <Editor
-                height="100%"
-                defaultLanguage="javascript"
-                theme="vs-dark"
-                value={code}
-                onChange={(val) => setCode(val ?? '')}
-                options={{
-                  fontSize: 13,
-                  fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-                  fontLigatures: true,
-                  minimap: { enabled: true },
-                  scrollBeyondLastLine: false,
-                  wordWrap: 'on',
-                  lineNumbers: 'on',
-                  renderLineHighlight: 'gutter',
-                  smoothScrolling: true,
-                  cursorBlinking: 'smooth',
-                  tabSize: 2,
-                  padding: { top: 16, bottom: 16 },
-                }}
-              />
-            </div>
+            {/* ── Code Tab ── */}
+            {activeTab === 'code' && (
+              <div className="flex-1 overflow-hidden">
+                <Editor
+                  height="100%"
+                  defaultLanguage="javascript"
+                  theme="vs-dark"
+                  value={code}
+                  onChange={(val) => setCode(val ?? '')}
+                  onMount={(editor) => { editorRef.current = editor }}
+                  options={{
+                    fontSize: 13,
+                    fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+                    fontLigatures: true,
+                    minimap: { enabled: true },
+                    scrollBeyondLastLine: false,
+                    wordWrap: 'on',
+                    lineNumbers: 'on',
+                    renderLineHighlight: 'gutter',
+                    smoothScrolling: true,
+                    cursorBlinking: 'smooth',
+                    tabSize: 2,
+                    padding: { top: 16, bottom: 16 },
+                  }}
+                />
+              </div>
+            )}
+
+            {/* ── Playground Tab ── */}
+            {activeTab === 'playground' && (
+              <div className="flex-1 overflow-hidden">
+                <ScriptPlayground onCodeGenerated={handlePlaygroundCode} />
+              </div>
+            )}
           </>
         ) : (
+          /* Empty state — no script selected */
           <div className="flex-1 flex flex-col items-center justify-center gap-4 text-slate-600">
             <FileCode className="w-16 h-16 opacity-30" />
             <div className="text-center">
@@ -305,7 +386,7 @@ export default function Scripts() {
         )}
       </div>
 
-      {/* Create Modal */}
+      {/* ── Create Script Modal ── */}
       {showCreate && (
         <Modal title="New Script" onClose={() => setShowCreate(false)}>
           <div className="space-y-4">
@@ -335,8 +416,8 @@ export default function Scripts() {
                   height="400px"
                   defaultLanguage="javascript"
                   theme="vs-dark"
-                  value={newScript.code}
-                  onChange={(val) => setNewScript((p) => ({ ...p, code: val ?? '' }))}
+                  value={newScript.content}
+                  onChange={(val) => setNewScript((p) => ({ ...p, content: val ?? '' }))}
                   options={{
                     fontSize: 12,
                     fontFamily: "'JetBrains Mono', monospace",
