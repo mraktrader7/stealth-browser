@@ -16,6 +16,9 @@
 8. [Understanding Live Logs](#8-understanding-live-logs)
 9. [Anti-Detect Explained](#9-anti-detect-explained)
 10. [Tips & Best Practices](#10-tips--best-practices)
+11. [🔒 Script Sandbox (isolated-vm)](#11-script-sandbox-isolated-vm)
+12. [⚙️ Task Queue & Retries (BullMQ)](#12-task-queue--retries-bullmq)
+13. [📋 Structured Logs — Filters & Line Numbers](#13-structured-logs--filters--line-numbers)
 
 ---
 
@@ -733,7 +736,7 @@ Set a **Cron Expression** when creating a task to run it automatically.
 
 ## 8. Understanding Live Logs
 
-Every script has access to the `log` function which streams messages to your dashboard in real time.
+Every script has access to the `log` function which streams messages to your dashboard in real time and persists them to the database with rich metadata.
 
 ### Log levels
 
@@ -743,6 +746,20 @@ Every script has access to the `log` function which streams messages to your das
 | `log.success()` | 🟢 Green | Task completed, data found, goals achieved |
 | `log.warn()` | 🟡 Yellow | Non-critical issues, retries, skipped items |
 | `log.error()` | 🔴 Red | Errors, failures, things that went wrong |
+| `log.debug()` | ⚪ Grey | Low-level details for troubleshooting |
+
+### Structured log fields
+
+Every log entry now carries:
+
+| Field | Description |
+|---|---|
+| `level` | `info` \| `warn` \| `error` \| `success` \| `debug` |
+| `message` | The log message text |
+| `source` | Source file (e.g. `task-<id>.js`) — set automatically |
+| `line` | Script line number (set when you call `log.info(msg, lineNum)`) |
+| `timestamp` | ISO-8601 datetime |
+| `task_id` | UUID of the owning task |
 
 ### Good logging practice
 
@@ -762,6 +779,38 @@ if (parseFloat(price) < 30) {
 }
 
 log.success('Done ✓');
+```
+
+### Filtering logs in the UI
+
+The **Logs** page supports multiple filters at once:
+
+| Filter | What it does |
+|---|---|
+| **Level** | Show only info / warn / error / success / debug |
+| **Date** | Show only logs from a specific calendar date (YYYY-MM-DD picker) |
+| **Task ID** | Show logs for one specific task |
+| **Search** | Free-text search inside the message field |
+
+All active filters can be cleared with one click.
+
+### Filtering logs via API
+
+```bash
+# Only errors
+GET /api/logs?level=error
+
+# Everything from today
+GET /api/logs?date=2024-01-15
+
+# Logs from a specific script run (source file)
+GET /api/logs?source=task-abc-123.js
+
+# Full-text search
+GET /api/logs?search=price+alert
+
+# Combine: errors from today for one task
+GET /api/logs?level=error&date=2024-01-15&task_id=<uuid>
 ```
 
 ---
@@ -854,6 +903,188 @@ for (const url of urls) {
 4. **Log everything** — more logs = easier debugging when things break
 5. **Handle errors gracefully** — wrap risky operations in try/catch and log errors
 6. **Check if logged in at the start** — don't assume the profile is still valid, cookies expire
+7. **Use retries for flaky sites** — pass `retries: 2` when running tasks via the API
+8. **Use log.debug() for verbose output** — keeps info/success clean while still capturing detail
+9. **Filter logs by date after a run** — quickly isolate what happened during a specific execution
+
+---
+
+## 11. Script Sandbox (isolated-vm)
+
+Every user script runs inside a **V8 Isolate** using the [isolated-vm](https://github.com/laverdet/isolated-vm) library — this is a significant security and stability improvement over the old Node.js `vm` module.
+
+### What changes for you as a script author?
+
+**Nothing** — your scripts work exactly the same. The same `page`, `log`, `sleep`, `fetch`, and `console` globals are available. The sandbox is transparent.
+
+### What it protects against
+
+| Risk | How isolated-vm handles it |
+|---|---|
+| Malicious scripts reading server files | Host Node.js heap is completely unreachable from inside the isolate |
+| Scripts leaking environment variables | `process`, `require`, `fs` — none of these exist inside the isolate |
+| Out-of-memory crash | Each isolate has a hard **128 MB memory cap** |
+| Infinite loop freezing the server | The isolate runs in its own V8 context — an infinite loop blocks only that isolate, not the event loop |
+| Script timeout bypass | Timeout is enforced at the V8 level, not just Promise.race |
+
+### How bridging works
+
+Since the isolate can't touch Node objects directly, the `page` object is a **proxy**: every call like `await page.goto(url)` sends a message across the isolate boundary to the real Playwright page running in the host process. The result is serialized and returned.
+
+This is why some edge cases differ:
+- Return values from page methods are **serialized to JSON** (e.g. `page.evaluate()` returning a complex object will come back as a JSON string — use `JSON.parse()` if needed)
+- Methods that return non-serializable objects (like element handles) are not directly usable — use `page.$eval()` or `page.evaluate()` to extract text/attributes instead
+
+### Memory limit
+
+The default cap is **128 MB**. If your script processes very large amounts of data in memory, you may hit this limit. Best practice: stream results via `log.info()` as you go rather than building a giant in-memory array.
+
+---
+
+## 12. Task Queue & Retries (BullMQ)
+
+StealthBrowser uses [BullMQ](https://docs.bullmq.io/) on top of Redis to queue and execute tasks reliably.
+
+### Why a queue?
+
+Without a queue, if the server crashes mid-task or a site is temporarily unavailable, the task is simply lost. With BullMQ:
+- Failed tasks can **retry automatically**
+- Job state is **persisted in Redis** — a server restart doesn't lose running jobs
+- You can **limit concurrency** to avoid overloading the server or getting IP-banned
+
+### Running a task with retries
+
+```bash
+curl -X POST http://localhost:3001/api/tasks/<id>/run \
+  -H "Content-Type: application/json" \
+  -d '{"retries": 3}'
+```
+
+This will attempt the task up to **4 times total** (1 initial + 3 retries) with exponential back-off:
+
+| Attempt | Delay before retry |
+|---|---|
+| 1st try | — |
+| 2nd try | 5 seconds |
+| 3rd try | 10 seconds |
+| 4th try | 20 seconds |
+
+### Concurrency control
+
+By default, **3 tasks run in parallel**. Set the `QUEUE_CONCURRENCY` environment variable to change this:
+
+```env
+# backend/.env
+QUEUE_CONCURRENCY=5   # allow up to 5 parallel tasks
+QUEUE_CONCURRENCY=1   # run tasks one at a time (safest for IP-sensitive sites)
+```
+
+### Checking queue status
+
+```bash
+curl http://localhost:3001/api/queue/metrics
+```
+
+```json
+{
+  "ready": true,
+  "data": {
+    "waiting":   2,
+    "active":    1,
+    "completed": 48,
+    "failed":    3,
+    "delayed":   0
+  }
+}
+```
+
+### Graceful degradation
+
+If Redis is not running when the server starts, BullMQ logs a warning and the system falls back to **direct in-process execution**. Tasks still run — you just lose retry support and queue persistence. This means you can develop and use StealthBrowser without Redis if you don't need retries.
+
+### When to use retries
+
+| Scenario | Recommended retries |
+|---|---|
+| Scraping a reliable site | 0 (default) |
+| Logging into a flaky site | 1–2 |
+| Submitting a form that sometimes times out | 2–3 |
+| Critical task that must not be lost | 3–5 |
+
+> ⚠️ Don't use high retry counts for tasks that interact with forms or trigger purchases — retrying could submit the same form multiple times.
+
+---
+
+## 13. Structured Logs — Filters & Line Numbers
+
+Logs in StealthBrowser are structured — each entry has metadata beyond just the message text.
+
+### Log entry structure
+
+```json
+{
+  "id": 42,
+  "task_id": "abc-123-...",
+  "level": "success",
+  "message": "Price alert! Now $19.99",
+  "source": "task-abc-123.js",
+  "line": null,
+  "timestamp": "2024-01-15T09:05:03.141Z"
+}
+```
+
+### Source tracking
+
+The `source` field is automatically set to `task-<id>.js` for every log line emitted from a user script. This lets you:
+- Filter all logs from a specific script run
+- Distinguish script logs from system logs (which have `source: null`)
+
+### Line numbers
+
+You can optionally pass a line number as a second argument to any log call:
+
+```javascript
+log.info('Checking price...', 12);   // line 12 in the source
+log.error('Login failed', 34);       // line 34
+log.success('Done', 56);
+```
+
+This is useful when your script is long and you want to quickly locate which line produced a log entry in the Logs page.
+
+> 💡 Future IDE integrations can use line numbers to link log entries directly back to the Monaco editor line.
+
+### Filtering in the Logs page
+
+The Logs page has two rows of filters:
+
+**Row 1 — Level + Date:**
+- Click a level badge (all / info / warn / error / success / debug) to filter by severity
+- Use the **date picker** to show only logs from a specific day
+
+**Row 2 — Search + Task ID:**
+- **Search box** — free-text search inside the `message` field (server-side, works on all pages)
+- **Task ID box** — paste a task UUID to see only that task's logs
+
+All filters combine (AND logic). Click **Clear N filters** to reset.
+
+### Filtering via API
+
+```bash
+# Errors only, today
+GET /api/logs?level=error&date=2024-01-15
+
+# All logs from a script run (by source file)
+GET /api/logs?source=task-abc-123.js
+
+# Search for a specific phrase
+GET /api/logs?search=Price+alert
+
+# Paginate through many results
+GET /api/logs?page=2&limit=100
+
+# Full combination
+GET /api/logs?level=warn&date=2024-01-15&task_id=abc-123&search=timeout
+```
 
 ---
 
@@ -861,7 +1092,7 @@ for (const url of urls) {
 
 ```
 backend/data/
-├── stealth.db          ← SQLite database (scripts, tasks, logs)
+├── stealth.db          ← SQLite database (scripts, tasks, logs with line/source columns)
 └── profiles/
     ├── profile-id-1/   ← Saved browser session (cookies, storage)
     │   ├── _meta.json  ← Profile name and description

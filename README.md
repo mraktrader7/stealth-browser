@@ -2,7 +2,7 @@
 
 > **Personal web automation platform** — Write scripts, bypass bot detection, schedule tasks, and watch live logs stream to your dashboard.
 
-Built with **Playwright stealth** (bypasses CAPTCHAs & anti-bot systems), a **VS Code–style editor** in the browser, real-time **Socket.IO log streaming**, a **task scheduler** with cron support, and a **visual Automation Playground** to build scripts without writing code.
+Built with **Playwright stealth** (bypasses CAPTCHAs & anti-bot systems), a **VS Code–style editor** in the browser, real-time **Socket.IO log streaming**, a **task scheduler** with cron support, a **visual Automation Playground** to build scripts without writing code, an **isolated-vm sandbox** for true script isolation, and a **BullMQ task queue** with automatic retries.
 
 ---
 
@@ -50,7 +50,11 @@ Built with **Playwright stealth** (bypasses CAPTCHAs & anti-bot systems), a **VS
 | 🕐 **Version History** | Auto-snapshot on every save — restore any previous version with one click |
 | 📋 **Duplicate Script** | Clone any script instantly as a starting point |
 | ⏰ **Task Scheduler** | Run scripts immediately or on a cron schedule |
-| 📡 **Live Log Streaming** | Real-time logs via Socket.IO — color-coded info/warn/error/success |
+| 📡 **Live Log Streaming** | Real-time logs via Socket.IO — color-coded info/warn/error/success/debug |
+| 🔒 **isolated-vm Sandbox** | Scripts run in a V8 Isolate — host memory unreachable, 128 MB cap, infinite loops don't freeze server |
+| ⚙️ **BullMQ Task Queue** | Reliable execution with automatic retries, exponential back-off, and Redis-backed job state |
+| 🛡️ **Named Browser Profiles** | Persistent login sessions — stay logged in across task runs per named profile |
+| 📋 **Structured Logs** | Logs carry source file + line number — filter by level, date, source, or free-text search |
 | 🖼️ **Screenshot API** | Capture page screenshots on demand |
 | 🗄️ **SQLite Storage** | Zero-setup persistent storage — no database server needed |
 | 🐳 **Docker Ready** | One command to run everything |
@@ -107,18 +111,32 @@ docker-compose up --build
 
 Open: **http://localhost:5173** ✅
 
+> Docker Compose starts the backend, frontend, and Redis automatically.
+
 ---
 
 ### Option 2: Manual Setup
 
-**Requirements:** Node.js 18+, npm
+**Requirements:** Node.js 18+, npm, Redis 6+
+
+#### Start Redis
+```bash
+# macOS
+brew services start redis
+
+# Ubuntu / Debian
+sudo systemctl start redis
+
+# Docker (one-liner)
+docker run -d -p 6379:6379 redis:7-alpine
+```
 
 #### Backend
 ```bash
 cd backend
 npm install
 npx playwright install chromium
-cp .env.example .env
+cp .env.example .env      # edit as needed
 mkdir -p data
 npm run dev
 # ✅ Running on http://localhost:3001
@@ -133,6 +151,8 @@ npm run dev
 ```
 
 Open: **http://localhost:5173** 🎉
+
+> **Note:** Redis is optional for basic usage — if Redis is unavailable the task queue gracefully falls back to direct in-process execution. You only lose retry/queue features.
 
 ---
 
@@ -149,9 +169,11 @@ Your script is plain JavaScript. These globals are auto-injected:
 // page        Playwright Page  (anti-detect, stealth mode)
 // browser     Playwright Browser instance
 // log(msg)    Stream logs to dashboard  →  info level
-// log.info / log.warn / log.error / log.success
+// log.info / log.warn / log.error / log.success / log.debug
 // sleep(ms)   await sleep(1000) helper
 // console     routes to log panel
+// fetch(url)  native HTTP requests (no browser needed)
+// randomInt(min, max)  random integer helper
 
 // ── Example 1: Scrape a page title ─────────────────────────────────────────
 await page.goto('https://example.com');
@@ -187,6 +209,8 @@ const todo = JSON.parse(body);
 log.success(`Todo: ${todo.title} (done: ${todo.completed})`);
 ```
 
+> 🔒 **Security note:** Scripts run inside a **V8 Isolate** (isolated-vm). They cannot access the server's file system, environment variables, or Node.js modules. Each script gets its own isolated memory space.
+
 ---
 
 ### 2️⃣ Create a Task
@@ -217,7 +241,107 @@ log.success(`Todo: ${todo.title} (done: ${todo.completed})`);
 | ▶ **Run now** | Click ▶ on any task |
 | ⏹ **Stop** | Click ⏹ on a running task |
 | **Live logs** | Dashboard → Live Output panel |
-| **History** | Logs page — filterable, paginated |
+| **History** | Logs page — filterable by level, date, source, text search |
+
+**Run with retries (via API):**
+```bash
+curl -X POST http://localhost:3001/api/tasks/:id/run \
+  -H "Content-Type: application/json" \
+  -d '{"retries": 3}'
+# Task will retry up to 3 times with exponential back-off (5s → 10s → 20s)
+```
+
+---
+
+## 🛡️ Named Browser Profiles
+
+Profiles let you **stay logged in** across task runs — no re-entering credentials every time.
+
+**How it works:**
+1. Go to **Profiles** in the sidebar → **+ New Profile**
+2. Give it a name (e.g. "Twitter Main Account")
+3. Run a login script **once** with that `profileId`
+4. All future tasks using the same `profileId` start already logged in ✅
+
+Profiles store cookies, localStorage, IndexedDB, and session tokens in an isolated folder on the server.
+
+**Via API:**
+```bash
+# Create a profile
+curl -X POST http://localhost:3001/api/profiles \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Twitter Account", "description": "My main login"}'
+
+# Run a task with a profile
+curl -X POST http://localhost:3001/api/tasks/:id/run \
+  -H "Content-Type: application/json" \
+  -d '{"profileId": "your-profile-uuid"}'
+```
+
+---
+
+## 🔒 Script Sandbox (isolated-vm)
+
+Every user script runs inside a **V8 Isolate** powered by [isolated-vm](https://github.com/laverdet/isolated-vm):
+
+| Protection | Detail |
+|---|---|
+| **Memory isolation** | Host Node.js heap is completely unreachable |
+| **Memory cap** | 128 MB per script — prevents runaway memory usage |
+| **CPU isolation** | Infinite loops don't freeze the event loop |
+| **No host access** | Cannot read files, env vars, or require() Node modules |
+| **Timeout enforcement** | Script killed after configurable timeout (default 5 min) |
+
+---
+
+## ⚙️ Task Queue (BullMQ)
+
+Tasks are processed through a **BullMQ queue** backed by Redis:
+
+| Feature | Detail |
+|---|---|
+| **Automatic retries** | Pass `retries: N` when running — failed tasks retry with exponential back-off |
+| **Concurrency control** | Max 3 parallel tasks by default (`QUEUE_CONCURRENCY` env var) |
+| **Persistent job state** | Job state survives server restarts (stored in Redis) |
+| **Graceful degradation** | Falls back to direct execution if Redis is unavailable |
+
+**Check queue status:**
+```bash
+GET /api/queue/metrics
+# → { waiting: 0, active: 1, completed: 45, failed: 2, delayed: 0 }
+```
+
+---
+
+## 📋 Structured Logs
+
+Every log entry now carries rich metadata:
+
+| Field | Description |
+|---|---|
+| `level` | `info` \| `warn` \| `error` \| `success` \| `debug` |
+| `message` | The log message text |
+| `source` | Source file name (e.g. `task-<id>.js`) |
+| `line` | Line number in the script (when available) |
+| `timestamp` | ISO-8601 datetime |
+
+**Filter logs via API:**
+```bash
+# By level
+GET /api/logs?level=error
+
+# By date (YYYY-MM-DD)
+GET /api/logs?date=2024-01-15
+
+# By source file
+GET /api/logs?source=task-abc-123.js
+
+# Full-text message search
+GET /api/logs?search=login+failed
+
+# Combine filters
+GET /api/logs?level=error&date=2024-01-15&task_id=<uuid>
+```
 
 ---
 
@@ -245,45 +369,62 @@ Every browser session automatically applies:
 ### Health
 ```
 GET  /api/health
+→ { status, timestamp, queue: true|false }
+```
+
+### Queue Metrics
+```
+GET  /api/queue/metrics
+→ { ready, data: { waiting, active, completed, failed, delayed } }
 ```
 
 ### Scripts
 ```
-GET    /api/scripts           list all
-POST   /api/scripts           create  { name, description, content }
-GET    /api/scripts/:id       get one
-PUT    /api/scripts/:id       update
-DELETE /api/scripts/:id       delete
+GET    /api/scripts                        list all
+POST   /api/scripts                        create  { name, description, content }
+GET    /api/scripts/:id                    get one
+PUT    /api/scripts/:id                    update
+DELETE /api/scripts/:id                    delete
+GET    /api/scripts/:id/versions           list version history
+GET    /api/scripts/:id/versions/:vid      get specific version
+DELETE /api/scripts/:id/versions/:vid      delete a version
 ```
 
 ### Tasks
 ```
-GET    /api/tasks             list all
-POST   /api/tasks             create  { name, script_id, cron_expression? }
-GET    /api/tasks/:id         get task + logs
-POST   /api/tasks/:id/run     run immediately
-POST   /api/tasks/:id/stop    stop running task
-DELETE /api/tasks/:id         delete
+GET    /api/tasks                          list all
+POST   /api/tasks                          create  { name, script_id, cron_expression? }
+GET    /api/tasks/:id                      get task + logs
+POST   /api/tasks/:id/run                  run  { headless?, proxy?, profileId?, timeoutMs?, retries? }
+POST   /api/tasks/:id/stop                 stop running task
+DELETE /api/tasks/:id                      delete
+```
+
+### Profiles
+```
+GET    /api/profiles                       list all profiles
+POST   /api/profiles                       create  { name, description? }
+DELETE /api/profiles/:id                   delete (clears all saved sessions)
 ```
 
 ### Browser Sessions
 ```
-POST   /api/browser/launch              { headless?, proxy? }
-GET    /api/browser/sessions            list active sessions
-POST   /api/browser/screenshot          { pageId }
-POST   /api/browser/close/:sessionId    close session
+POST   /api/browser/launch                 { headless?, proxy? }
+GET    /api/browser/sessions               list active sessions
+POST   /api/browser/screenshot             { pageId }
+POST   /api/browser/close/:sessionId       close session
 ```
 
 ### Logs
 ```
-GET    /api/logs              paginated  { page, limit, task_id?, level? }
-DELETE /api/logs              clear all
+GET    /api/logs     paginated  { page, limit, task_id?, level?, date?, source?, search? }
+DELETE /api/logs     clear all (or ?task_id=<id> for one task)
 ```
 
 ### Socket.IO Events
 | Event | Direction | Payload |
 |---|---|---|
-| `log` | Server→Client | `{ task_id, level, message, timestamp }` |
+| `log` | Server→Client | `{ task_id, level, message, source, line, timestamp }` |
 | `log:global` | Server→Client | same — all tasks |
 | `task:status` | Server→Client | `{ taskId, status, result?, error? }` |
 | `subscribe:task` | Client→Server | `taskId` — join task room |
@@ -297,27 +438,30 @@ stealth-browser/
 ├── backend/
 │   └── src/
 │       ├── index.js                 # Express + Socket.IO server
-│       ├── db/index.js              # SQLite (scripts, tasks, logs)
+│       ├── db/index.js              # SQLite (scripts, tasks, logs) + migrations
 │       ├── routes/
-│       │   ├── scripts.js           # CRUD /api/scripts
-│       │   ├── tasks.js             # /api/tasks + run/stop
+│       │   ├── scripts.js           # CRUD /api/scripts + version history
+│       │   ├── tasks.js             # /api/tasks + run/stop + cron scheduler
 │       │   ├── browser.js           # /api/browser sessions
-│       │   └── logs.js              # /api/logs
+│       │   ├── logs.js              # /api/logs (structured, filterable)
+│       │   └── profiles.js          # /api/profiles (named persistent sessions)
 │       └── services/
-│           ├── browser.service.js   # 🕵️ Anti-detect engine
-│           └── executor.service.js  # VM sandbox runner
+│           ├── browser.service.js   # 🕵️ Anti-detect engine + profile management
+│           ├── executor.service.js  # 🔒 isolated-vm sandbox runner
+│           └── queue.service.js     # ⚙️ BullMQ queue + Redis connection
 └── frontend/
     └── src/
         ├── pages/
         │   ├── Dashboard.jsx        # Stats + live output
         │   ├── Scripts.jsx          # Monaco editor + Playground tabs
-        │   ├── Tasks.jsx            # Task manager
-        │   ├── Logs.jsx             # Log history
+        │   ├── Tasks.jsx            # Task manager + profile run modal
+        │   ├── Logs.jsx             # Structured log history + filters
+        │   ├── Profiles.jsx         # 🛡️ Named browser profile manager
         │   └── Settings.jsx         # Config
         ├── components/
         │   ├── ScriptPlayground.jsx # 🪄 Visual automation builder
         │   ├── VersionHistory.jsx   # 🕐 Version history + restore panel
-        │   └── __tests__/           # 38 unit tests
+        │   └── __tests__/           # Unit tests
         ├── hooks/useSocket.js       # Socket.IO hook
         └── utils/api.js             # Axios client
 ```
@@ -332,6 +476,15 @@ PORT=3001
 NODE_ENV=development
 CORS_ORIGIN=http://localhost:5173
 DB_PATH=./data/stealth.db
+
+# Redis — required for BullMQ retries & queue metrics (optional, falls back gracefully)
+REDIS_URL=redis://127.0.0.1:6379
+
+# BullMQ concurrency — max parallel tasks (default: 3)
+QUEUE_CONCURRENCY=3
+
+# Profiles — where browser session folders are stored (default: ./data/profiles)
+PROFILES_DIR=./data/profiles
 ```
 
 ---
@@ -345,11 +498,18 @@ mkdir -p backend/data
 # Playwright browser missing
 cd backend && npx playwright install chromium
 
+# Redis connection error — BullMQ will log a warning and fall back to direct execution
+# Install Redis: brew install redis  (macOS)  or  apt install redis-server  (Ubuntu)
+# Or skip Redis entirely — the queue just won't have retry support
+
 # Port in use
 kill $(lsof -ti:3001) && kill $(lsof -ti:5173)
 
 # Frontend dependency issues
 cd frontend && rm -rf node_modules && npm install
+
+# Check queue status
+curl http://localhost:3001/api/queue/metrics
 ```
 
 ---
@@ -360,7 +520,8 @@ cd frontend && rm -rf node_modules && npm install
 |---|---|
 | **Backend** | Node.js 18, Express 4, Socket.IO 4 |
 | **Browser** | Playwright + playwright-extra + stealth plugin |
-| **Sandbox** | Node.js `vm` module |
+| **Sandbox** | isolated-vm (V8 Isolates — true code isolation) |
+| **Task Queue** | BullMQ + Redis (retries, concurrency, persistence) |
 | **Scheduler** | node-cron |
 | **Database** | SQLite (better-sqlite3) |
 | **Frontend** | React 18, Vite 5, Tailwind CSS 3 |
