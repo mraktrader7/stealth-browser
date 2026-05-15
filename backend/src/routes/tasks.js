@@ -146,20 +146,21 @@ router.post('/:id/run', async (req, res) => {
     return res.status(422).json({ error: 'Script has no content to execute' });
   }
 
-  const { headless = true, proxy, profileId, timeoutMs } = req.body || {};
+  const { headless = true, proxy, profileId, timeoutMs, retries = 0 } = req.body || {};
 
   // Respond immediately; execution happens in background
   res.json({ message: 'Task started', taskId: task.id });
 
-  // Fire and forget
+  // Fire and forget — supports BullMQ retries when retries > 0
   executorService
     .execute({
-      taskId: task.id,
+      taskId:     task.id,
       scriptCode: task.script_content,
       headless,
       proxy,
-      profileId,   // ← persistent profile support
+      profileId,
       timeoutMs,
+      retries: Math.max(0, parseInt(retries, 10) || 0),
     })
     .catch((err) => {
       console.error(`[Tasks] Execution error for ${task.id}:`, err.message);

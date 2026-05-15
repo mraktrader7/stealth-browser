@@ -9,6 +9,7 @@ import {
   Shield,
   Wifi,
   WifiOff,
+  ShieldCheck,
 } from 'lucide-react'
 
 const NAV_ITEMS = [
@@ -16,6 +17,7 @@ const NAV_ITEMS = [
   { to: '/scripts', label: 'Scripts', icon: Code2 },
   { to: '/tasks', label: 'Tasks', icon: ListTodo },
   { to: '/logs', label: 'Logs', icon: ScrollText },
+  { to: '/profiles', label: 'Profiles', icon: ShieldCheck },
   { to: '/settings', label: 'Settings', icon: Settings },
 ]
 

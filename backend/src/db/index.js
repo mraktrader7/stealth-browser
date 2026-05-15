@@ -67,8 +67,10 @@ const SCHEMA = `
     id        INTEGER PRIMARY KEY AUTOINCREMENT,
     task_id   TEXT NOT NULL,
     level     TEXT NOT NULL DEFAULT 'info'
-                  CHECK(level IN ('info','warn','error','success')),
+                  CHECK(level IN ('info','warn','error','success','debug')),
     message   TEXT NOT NULL,
+    line      INTEGER,
+    source    TEXT,
     timestamp TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
   );
@@ -77,7 +79,30 @@ const SCHEMA = `
   CREATE INDEX IF NOT EXISTS idx_tasks_script_id   ON tasks(script_id);
   CREATE INDEX IF NOT EXISTS idx_logs_task_id      ON logs(task_id);
   CREATE INDEX IF NOT EXISTS idx_logs_timestamp    ON logs(timestamp);
+  CREATE INDEX IF NOT EXISTS idx_logs_level        ON logs(level);
+  CREATE INDEX IF NOT EXISTS idx_logs_source       ON logs(source);
 `;
+
+// ─── Migrations ───────────────────────────────────────────────────────────────
+// Add new columns to existing tables without data loss.
+const MIGRATIONS = [
+  // v1 – add structured log columns (line, source) if they don't exist
+  `ALTER TABLE logs ADD COLUMN line INTEGER`,
+  `ALTER TABLE logs ADD COLUMN source TEXT`,
+];
+
+function runMigrations(database) {
+  for (const sql of MIGRATIONS) {
+    try {
+      database.prepare(sql).run();
+    } catch (e) {
+      // Column already exists — safe to ignore
+      if (!e.message.includes('duplicate column')) {
+        // Only re-throw unexpected errors
+      }
+    }
+  }
+}
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 function initialize() {
@@ -94,6 +119,9 @@ function initialize() {
     }
   });
   runAll();
+
+  // Run migrations for existing databases
+  runMigrations(database);
 }
 
 function close() {
@@ -286,23 +314,33 @@ const tasks = {
 
 // ─── Logs ─────────────────────────────────────────────────────────────────────
 const logsDb = {
-  findAll({ page = 1, limit = 50, task_id } = {}) {
+  /**
+   * Paginated log query with optional filters.
+   * Supports: task_id, level, source, date (YYYY-MM-DD), search (message LIKE)
+   */
+  findAll({ page = 1, limit = 50, task_id, level, source, date, search } = {}) {
     const offset = (page - 1) * limit;
-    const countBase = task_id
-      ? getDb().prepare('SELECT COUNT(*) AS total FROM logs WHERE task_id = ?')
-      : getDb().prepare('SELECT COUNT(*) AS total FROM logs');
+    const database = getDb();
 
-    const { total } = task_id ? countBase.get(task_id) : countBase.get();
+    // Build WHERE clause dynamically
+    const conditions = [];
+    const params     = [];
 
-    const rows = task_id
-      ? getDb()
-          .prepare(
-            'SELECT * FROM logs WHERE task_id = ? ORDER BY timestamp DESC LIMIT ? OFFSET ?'
-          )
-          .all(task_id, limit, offset)
-      : getDb()
-          .prepare('SELECT * FROM logs ORDER BY timestamp DESC LIMIT ? OFFSET ?')
-          .all(limit, offset);
+    if (task_id) { conditions.push('task_id = ?'); params.push(task_id); }
+    if (level && level !== 'all') { conditions.push('level = ?'); params.push(level); }
+    if (source) { conditions.push('source = ?'); params.push(source); }
+    if (date)   { conditions.push("date(timestamp) = ?"); params.push(date); }
+    if (search) { conditions.push('message LIKE ?'); params.push(`%${search}%`); }
+
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    const { total } = database
+      .prepare(`SELECT COUNT(*) AS total FROM logs ${where}`)
+      .get(...params);
+
+    const rows = database
+      .prepare(`SELECT * FROM logs ${where} ORDER BY timestamp DESC LIMIT ? OFFSET ?`)
+      .all(...params, limit, offset);
 
     return { total, page, limit, rows };
   },
@@ -313,13 +351,17 @@ const logsDb = {
       .all(taskId);
   },
 
-  insert({ task_id, level = 'info', message }) {
+  /**
+   * Insert a structured log entry.
+   * @param {{ task_id, level?, message, line?, source? }} entry
+   */
+  insert({ task_id, level = 'info', message, line = null, source = null }) {
     const now = new Date().toISOString();
     return getDb()
       .prepare(
-        'INSERT INTO logs (task_id, level, message, timestamp) VALUES (?, ?, ?, ?)'
+        'INSERT INTO logs (task_id, level, message, line, source, timestamp) VALUES (?, ?, ?, ?, ?, ?)'
       )
-      .run(task_id, level, message, now);
+      .run(task_id, level, message, line, source, now);
   },
 
   clearAll() {

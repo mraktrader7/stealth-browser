@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useContext, useRef } from 'react'
-import { ScrollText, Trash2, RefreshCw, Filter, X, Loader2, AlertCircle, CheckCircle2 } from 'lucide-react'
+import { ScrollText, Trash2, RefreshCw, Filter, X, Loader2, AlertCircle, CheckCircle2, Search, Calendar } from 'lucide-react'
 import { logs as logsApi } from '../utils/api.js'
 import { SocketContext } from '../App.jsx'
 import { format } from 'date-fns'
@@ -54,12 +54,15 @@ export default function Logs() {
   const [loadingApi, setLoadingApi]   = useState(false)
 
   // Filters
-  const [levelFilter, setLevelFilter]   = useState('all')
-  const [taskFilter, setTaskFilter]     = useState('')
+  const [levelFilter, setLevelFilter]     = useState('all')
+  const [taskFilter, setTaskFilter]       = useState('')
   const [taskFilterInput, setTaskFilterInput] = useState('')
-  const [toast, setToast]               = useState(null)
-  const [clearing, setClearing]         = useState(false)
-  const [autoRefresh, setAutoRefresh]   = useState(true)
+  const [dateFilter, setDateFilter]       = useState('')          // YYYY-MM-DD
+  const [searchFilter, setSearchFilter]   = useState('')
+  const [searchInput, setSearchInput]     = useState('')
+  const [toast, setToast]                 = useState(null)
+  const [clearing, setClearing]           = useState(false)
+  const [autoRefresh, setAutoRefresh]     = useState(true)
   const intervalRef = useRef(null)
 
   const showToast = useCallback((type, message) => setToast({ type, message }), [])
@@ -67,19 +70,21 @@ export default function Logs() {
   const fetchApiLogs = useCallback(async (silent = false) => {
     if (!silent) setLoadingApi(true)
     try {
-      const params = { offset: page * PAGE_SIZE, limit: PAGE_SIZE }
+      const params = { page: page + 1, limit: PAGE_SIZE }
       if (levelFilter !== 'all') params.level = levelFilter
-      if (taskFilter) params.task_id = taskFilter
+      if (taskFilter)   params.task_id = taskFilter
+      if (dateFilter)   params.date    = dateFilter
+      if (searchFilter) params.search  = searchFilter
       const res = await logsApi.getAll(params)
       const data = res?.data ?? res ?? {}
-      setApiLogs(Array.isArray(data) ? data : (data.items ?? data.logs ?? []))
+      setApiLogs(Array.isArray(data) ? data : (data.items ?? data.data ?? data.logs ?? []))
       setTotal(data.total ?? (Array.isArray(data) ? data.length : 0))
     } catch (err) {
       if (!silent) showToast('error', `Failed to load logs: ${err.message}`)
     } finally {
       if (!silent) setLoadingApi(false)
     }
-  }, [page, levelFilter, taskFilter, showToast])
+  }, [page, levelFilter, taskFilter, dateFilter, searchFilter, showToast])
 
   useEffect(() => { fetchApiLogs() }, [fetchApiLogs])
 
@@ -114,6 +119,22 @@ export default function Logs() {
     setPage(0)
   }
 
+  const handleSearchSubmit = (e) => {
+    e.preventDefault()
+    setSearchFilter(searchInput.trim())
+    setPage(0)
+  }
+
+  const clearAllFilters = () => {
+    setLevelFilter('all')
+    setTaskFilter('')
+    setTaskFilterInput('')
+    setDateFilter('')
+    setSearchFilter('')
+    setSearchInput('')
+    setPage(0)
+  }
+
   // Merge socket logs into display (de-duplicate by id)
   const allLogs = React.useMemo(() => {
     const merged = [...apiLogs]
@@ -122,16 +143,18 @@ export default function Logs() {
       if (apiIds.has(l.id)) return false
       if (levelFilter !== 'all' && l.level !== levelFilter && l.level !== `${levelFilter}ing`) return false
       if (taskFilter && l.task_id !== taskFilter) return false
+      if (searchFilter && !l.message?.toLowerCase().includes(searchFilter.toLowerCase())) return false
       return true
     })
     merged.unshift(...filtered.slice(-100))
     return merged.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
-  }, [apiLogs, socketLogs, levelFilter, taskFilter])
+  }, [apiLogs, socketLogs, levelFilter, taskFilter, searchFilter])
 
   const totalPages = Math.ceil(total / PAGE_SIZE)
+  const activeFilters = [levelFilter !== 'all', taskFilter, dateFilter, searchFilter].filter(Boolean).length
 
   return (
-    <div className="p-6 max-w-6xl mx-auto space-y-5">
+    <div className="p-6 max-w-7xl mx-auto space-y-5">
       {toast && <Toast type={toast.type} message={toast.message} onClose={() => setToast(null)} />}
 
       {/* Header */}
@@ -140,7 +163,7 @@ export default function Logs() {
           <ScrollText className="w-5 h-5 text-sky-400" />
           <div>
             <h1 className="text-xl font-bold text-slate-100">Logs</h1>
-            <p className="text-sm text-slate-500">Full log history with filtering</p>
+            <p className="text-sm text-slate-500">Structured log history — filter by level, date, source &amp; task</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -163,7 +186,8 @@ export default function Logs() {
       </div>
 
       {/* Filters */}
-      <div className="card p-4">
+      <div className="card p-4 space-y-3">
+        {/* Row 1: Level + Date */}
         <div className="flex items-center gap-3 flex-wrap">
           <div className="flex items-center gap-2">
             <Filter className="w-3.5 h-3.5 text-slate-500" />
@@ -186,7 +210,55 @@ export default function Logs() {
             ))}
           </div>
 
+          {/* Date picker */}
           <div className="ml-auto flex items-center gap-2">
+            <Calendar className="w-3.5 h-3.5 text-slate-500" />
+            <span className="text-xs font-medium text-slate-400">Date:</span>
+            <input
+              type="date"
+              value={dateFilter}
+              onChange={(e) => { setDateFilter(e.target.value); setPage(0) }}
+              className="input text-xs w-36"
+            />
+            {dateFilter && (
+              <button
+                onClick={() => { setDateFilter(''); setPage(0) }}
+                className="btn-ghost text-xs px-2"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Row 2: Search + Task ID */}
+        <div className="flex items-center gap-3 flex-wrap">
+          {/* Message search */}
+          <div className="flex items-center gap-2">
+            <Search className="w-3.5 h-3.5 text-slate-500" />
+            <span className="text-xs font-medium text-slate-400">Search:</span>
+          </div>
+          <form onSubmit={handleSearchSubmit} className="flex gap-1">
+            <input
+              className="input text-xs w-44"
+              placeholder="Search messages…"
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+            />
+            <button type="submit" className="btn-secondary text-xs px-3">Go</button>
+            {searchFilter && (
+              <button
+                type="button"
+                onClick={() => { setSearchFilter(''); setSearchInput(''); setPage(0) }}
+                className="btn-ghost text-xs px-2"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </form>
+
+          {/* Task ID filter */}
+          <div className="flex items-center gap-2">
             <span className="text-xs font-medium text-slate-400">Task ID:</span>
             <form onSubmit={handleTaskFilterSubmit} className="flex gap-1">
               <input
@@ -207,6 +279,17 @@ export default function Logs() {
               )}
             </form>
           </div>
+
+          {/* Clear all filters */}
+          {activeFilters > 0 && (
+            <button
+              onClick={clearAllFilters}
+              className="ml-auto text-xs text-slate-500 hover:text-slate-300 flex items-center gap-1"
+            >
+              <X className="w-3 h-3" />
+              Clear {activeFilters} filter{activeFilters > 1 ? 's' : ''}
+            </button>
+          )}
         </div>
       </div>
 
@@ -218,7 +301,8 @@ export default function Logs() {
               <tr className="border-b border-slate-700 bg-slate-800/50">
                 <th className="text-left px-4 py-3 text-slate-400 font-medium w-44">Timestamp</th>
                 <th className="text-left px-4 py-3 text-slate-400 font-medium w-20">Level</th>
-                <th className="text-left px-4 py-3 text-slate-400 font-medium w-28">Source</th>
+                <th className="text-left px-4 py-3 text-slate-400 font-medium w-32">Source</th>
+                <th className="text-left px-4 py-3 text-slate-400 font-medium w-14">Line</th>
                 <th className="text-left px-4 py-3 text-slate-400 font-medium">Message</th>
               </tr>
             </thead>
@@ -228,33 +312,40 @@ export default function Logs() {
                   <tr key={i} className="animate-pulse">
                     <td className="px-4 py-3"><div className="h-3 w-32 bg-slate-700 rounded" /></td>
                     <td className="px-4 py-3"><div className="h-3 w-12 bg-slate-700 rounded" /></td>
-                    <td className="px-4 py-3"><div className="h-3 w-16 bg-slate-700 rounded" /></td>
+                    <td className="px-4 py-3"><div className="h-3 w-24 bg-slate-700 rounded" /></td>
+                    <td className="px-4 py-3"><div className="h-3 w-8  bg-slate-700 rounded" /></td>
                     <td className="px-4 py-3"><div className="h-3 w-full bg-slate-700 rounded" /></td>
                   </tr>
                 ))
               ) : allLogs.length === 0 ? (
                 <tr>
-                  <td colSpan={4} className="px-4 py-16 text-center text-slate-600">
+                  <td colSpan={5} className="px-4 py-16 text-center text-slate-600">
                     No log entries match your filters
                   </td>
                 </tr>
               ) : (
                 allLogs.map((entry, idx) => {
-                  const lvl = entry.level ?? 'info'
+                  const lvl    = entry.level ?? 'info'
                   const rowCls = LEVEL_ROW[lvl] ?? ''
                   const badgeCls = LEVEL_BADGE[lvl] ?? 'badge bg-slate-700 text-slate-400'
                   const ts = (() => {
                     try { return format(new Date(entry.timestamp), 'yyyy-MM-dd HH:mm:ss.SSS') }
                     catch (_) { return entry.timestamp ?? '' }
                   })()
+                  const src = entry.source ?? entry.task_id?.slice(0, 8) ?? '—'
                   return (
                     <tr key={entry.id ?? idx} className={`hover:bg-slate-800/40 transition-colors ${rowCls}`}>
                       <td className="px-4 py-2.5 font-mono text-slate-500 whitespace-nowrap">{ts}</td>
                       <td className="px-4 py-2.5">
                         <span className={badgeCls}>{lvl}</span>
                       </td>
-                      <td className="px-4 py-2.5 text-slate-500 truncate max-w-[7rem]">
-                        {entry.source ?? entry.task_id ?? '—'}
+                      <td className="px-4 py-2.5 text-slate-500 truncate max-w-[8rem] font-mono" title={src}>
+                        {src}
+                      </td>
+                      <td className="px-4 py-2.5 text-slate-600 font-mono text-center">
+                        {entry.line != null ? (
+                          <span className="text-slate-400">{entry.line}</span>
+                        ) : '—'}
                       </td>
                       <td className="px-4 py-2.5 text-slate-300 font-mono break-all">
                         {entry.message}

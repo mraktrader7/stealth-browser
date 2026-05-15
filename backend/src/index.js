@@ -8,8 +8,9 @@ const express = require('express');
 const { Server } = require('socket.io');
 const cors = require('cors');
 
-const db = require('./db');
+const db           = require('./db');
 const browserService = require('./services/browser.service');
+const queueService   = require('./services/queue.service');
 
 const scriptsRouter = require('./routes/scripts');
 const tasksRouter = require('./routes/tasks');
@@ -54,7 +55,13 @@ app.use('/api/logs', logsRouter);
 app.use('/api/profiles', profilesRouter);
 
 app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  res.json({ status: 'ok', timestamp: new Date().toISOString(), queue: queueService.isReady() });
+});
+
+// Queue metrics endpoint
+app.get('/api/queue/metrics', async (_req, res) => {
+  const metrics = await queueService.getMetrics();
+  res.json({ data: metrics, ready: queueService.isReady() });
 });
 
 // ─── 404 handler ─────────────────────────────────────────────────────────────
@@ -98,6 +105,9 @@ async function start() {
     db.initialize();
     console.log('[DB] Database initialized');
 
+    // Initialize BullMQ queue (non-fatal if Redis is down)
+    await queueService.init();
+
     server.listen(PORT, () => {
       console.log(`[SERVER] StealthBrowser backend running on http://localhost:${PORT}`);
       console.log(`[SERVER] CORS origin: ${CORS_ORIGIN}`);
@@ -117,6 +127,12 @@ async function shutdown(signal) {
     console.log('[SHUTDOWN] All browser sessions closed');
   } catch (err) {
     console.error('[SHUTDOWN] Error closing browsers:', err);
+  }
+
+  try {
+    await queueService.shutdown();
+  } catch (err) {
+    console.error('[SHUTDOWN] Error shutting down queue:', err);
   }
 
   server.close(() => {

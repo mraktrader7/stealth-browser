@@ -6,6 +6,7 @@ import Scripts from './pages/Scripts.jsx'
 import Tasks from './pages/Tasks.jsx'
 import Logs from './pages/Logs.jsx'
 import Settings from './pages/Settings.jsx'
+import Profiles from './pages/Profiles.jsx'
 import { useSocket } from './hooks/useSocket.js'
 
 export const SocketContext = React.createContext(null)
@@ -24,6 +25,7 @@ export default function App() {
             <Route path="/tasks" element={<Tasks />} />
             <Route path="/logs" element={<Logs />} />
             <Route path="/settings" element={<Settings />} />
+            <Route path="/profiles" element={<Profiles />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>
