@@ -4,8 +4,37 @@ const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 
 const db = require('../db');
+const { requireAuth } = require('../middleware/auth');
 
 const router = express.Router();
+
+// Apply auth to all script routes
+router.use(requireAuth);
+
+// ─── Script Import Validation ─────────────────────────────────────────────────
+const DANGEROUS_PATTERNS = [
+  /\beval\s*\(/,
+  /\bFunction\s*\(/,
+  /\brequire\s*\(/,
+  /\bprocess\s*\./,
+  /\bchild_process\b/,
+  /\bfs\s*\./,
+  /\b__dirname\b/,
+  /\b__filename\b/,
+  /\bglobal\s*\./,
+  /new\s+Function\s*\(/,
+];
+
+function validateScriptContent(content) {
+  if (!content || typeof content !== 'string') return [];
+  const issues = [];
+  for (const pattern of DANGEROUS_PATTERNS) {
+    if (pattern.test(content)) {
+      issues.push(`Dangerous pattern detected: ${pattern.toString()}`);
+    }
+  }
+  return issues;
+}
 
 // ─── Version History Endpoints ────────────────────────────────────────────────
 
@@ -35,6 +64,17 @@ router.delete('/:id/versions/:versionId', (req, res) => {
   }
   db.scriptVersions.delete(req.params.versionId);
   res.json({ message: 'Version deleted', id: req.params.versionId });
+});
+
+// GET /api/scripts/:id/export — download script as .js file
+router.get('/:id/export', (req, res) => {
+  const script = db.scripts.findById(req.params.id);
+  if (!script) return res.status(404).json({ error: 'Script not found' });
+
+  const filename = `${script.name.replace(/[^a-z0-9_-]/gi, '_')}.js`;
+  res.setHeader('Content-Type', 'application/javascript');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.send(script.content);
 });
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -83,7 +123,19 @@ router.post('/', (req, res) => {
     return res.status(400).json({ error: 'Validation failed', details: errors });
   }
 
-  const { name, content = '', description = '' } = req.body;
+  const { name, content = '', description = '', skipValidation = false } = req.body;
+
+  // Validate script content for dangerous patterns (can be skipped for trusted imports)
+  if (!skipValidation && content.trim()) {
+    const issues = validateScriptContent(content);
+    if (issues.length > 0) {
+      return res.status(422).json({
+        error: 'Script contains potentially unsafe patterns',
+        details: issues,
+        hint: 'Pass skipValidation: true if you trust this script content.',
+      });
+    }
+  }
 
   const script = db.scripts.create({
     id: uuidv4(),

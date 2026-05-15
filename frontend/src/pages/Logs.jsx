@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useContext, useRef } from 'react'
-import { ScrollText, Trash2, RefreshCw, Filter, X, Loader2, AlertCircle, CheckCircle2, Search, Calendar } from 'lucide-react'
+import { ScrollText, Trash2, RefreshCw, Filter, X, Loader2, AlertCircle, CheckCircle2, Search, Calendar, Download } from 'lucide-react'
 import { logs as logsApi } from '../utils/api.js'
 import { SocketContext } from '../App.jsx'
 import { format } from 'date-fns'
@@ -178,6 +178,23 @@ export default function Logs() {
             <RefreshCw className={`w-3.5 h-3.5 ${loadingApi ? 'animate-spin' : ''}`} />
             Refresh
           </button>
+          {/* Export buttons */}
+          <a
+            href={logsApi.exportUrl({ export: 'csv', level: levelFilter !== 'all' ? levelFilter : undefined, task_id: taskFilter || undefined, date: dateFilter || undefined, search: searchFilter || undefined })}
+            download
+            className="btn-secondary text-xs flex items-center gap-1.5"
+            title="Export as CSV"
+          >
+            <Download className="w-3.5 h-3.5" /> CSV
+          </a>
+          <a
+            href={logsApi.exportUrl({ export: 'json', level: levelFilter !== 'all' ? levelFilter : undefined, task_id: taskFilter || undefined, date: dateFilter || undefined, search: searchFilter || undefined })}
+            download
+            className="btn-secondary text-xs flex items-center gap-1.5"
+            title="Export as JSON"
+          >
+            <Download className="w-3.5 h-3.5" /> JSON
+          </a>
           <button onClick={handleClearAll} disabled={clearing} className="btn-danger text-xs">
             {clearing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
             Clear All

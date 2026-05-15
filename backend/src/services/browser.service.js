@@ -97,6 +97,18 @@ const VIEWPORTS = [
   { width: 1280, height: 800 },
 ];
 
+// Mobile viewport presets (public API for the task runner)
+const MOBILE_PRESETS = {
+  'iphone-14':       { width: 390,  height: 844,  deviceScaleFactor: 3, isMobile: true,  userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1' },
+  'iphone-14-plus':  { width: 428,  height: 926,  deviceScaleFactor: 3, isMobile: true,  userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1' },
+  'iphone-se':       { width: 375,  height: 667,  deviceScaleFactor: 2, isMobile: true,  userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Mobile/15E148 Safari/604.1' },
+  'ipad-pro':        { width: 1024, height: 1366, deviceScaleFactor: 2, isMobile: false, userAgent: 'Mozilla/5.0 (iPad; CPU OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1' },
+  'pixel-7':         { width: 412,  height: 915,  deviceScaleFactor: 2.625, isMobile: true, userAgent: 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Mobile Safari/537.36' },
+  'samsung-s23':     { width: 360,  height: 780,  deviceScaleFactor: 3, isMobile: true,  userAgent: 'Mozilla/5.0 (Linux; Android 13; SM-S911B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Mobile Safari/537.36' },
+  'galaxy-tab':      { width: 800,  height: 1280, deviceScaleFactor: 2, isMobile: false, userAgent: 'Mozilla/5.0 (Linux; Android 12; SM-T730) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Safari/537.36' },
+};
+
+
 const LOCALES  = ['en-US', 'en-GB', 'en-CA'];
 const TIMEZONES = ['America/New_York', 'America/Los_Angeles', 'Europe/London', 'Europe/Berlin'];
 
@@ -162,6 +174,7 @@ class BrowserService {
    * @param {object}  opts
    * @param {boolean} [opts.headless=true]
    * @param {string}  [opts.proxy]         "http://user:pass@host:port"
+   * @param {string}  [opts.mobilePreset]  one of MOBILE_PRESETS keys (e.g. 'iphone-14')
    * @param {string}  [opts.profileId]     re-use a saved profile (= stay logged in)
    * @param {object}  [opts.fingerprint]   override fingerprint values
    * @param {string}  [opts.browserId]     stable ID (generated if omitted)
@@ -170,13 +183,19 @@ class BrowserService {
     const {
       headless = true,
       proxy,
+      mobilePreset,
       profileId,          // ← KEY: if set, sessions/cookies persist on disk
       fingerprint: fpOverrides = {},
       browserId: reqId,
     } = opts;
 
+    // Apply mobile preset overrides if specified
+    const mobileOverrides = mobilePreset && MOBILE_PRESETS[mobilePreset]
+      ? MOBILE_PRESETS[mobilePreset]
+      : {};
+
     const browserId  = reqId || uuidv4();
-    const fingerprint = buildFingerprint(fpOverrides);
+    const fingerprint = buildFingerprint({ ...mobileOverrides, ...fpOverrides });
 
     const launchOptions = {
       headless,
@@ -348,9 +367,32 @@ class BrowserService {
 const browserService = new BrowserService();
 
 // Export profile helpers for use in routes
-browserService.listProfiles  = listProfiles;
-browserService.createProfile = createProfile;
-browserService.deleteProfile = deleteProfile;
+browserService.listProfiles   = listProfiles;
+browserService.createProfile  = createProfile;
+browserService.deleteProfile  = deleteProfile;
 browserService.getProfilePath = getProfilePath;
+browserService.MOBILE_PRESETS = MOBILE_PRESETS;
+
+// ─── Proxy Pool Rotation ───────────────────────────────────────────────────────
+// Load proxy pool from PROXY_POOL env var (comma-separated proxy URLs).
+// Call browserService.getNextProxy() to get the next proxy in round-robin order.
+let _proxyPool = [];
+let _proxyIndex = 0;
+
+if (process.env.PROXY_POOL) {
+  _proxyPool = process.env.PROXY_POOL.split(',').map(s => s.trim()).filter(Boolean);
+  console.log(`[BrowserService] Proxy pool loaded: ${_proxyPool.length} proxies`);
+}
+
+browserService.getNextProxy = function() {
+  if (_proxyPool.length === 0) return null;
+  const proxy = _proxyPool[_proxyIndex % _proxyPool.length];
+  _proxyIndex++;
+  return proxy;
+};
+
+browserService.getProxyPool = function() {
+  return { pool: _proxyPool, currentIndex: _proxyIndex % Math.max(_proxyPool.length, 1) };
+};
 
 module.exports = browserService;

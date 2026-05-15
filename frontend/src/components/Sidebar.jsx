@@ -10,7 +10,10 @@ import {
   Wifi,
   WifiOff,
   ShieldCheck,
+  Sun,
+  Moon,
 } from 'lucide-react'
+import { useTheme } from '../contexts/ThemeContext.jsx'
 
 const NAV_ITEMS = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, exact: true },
@@ -23,6 +26,7 @@ const NAV_ITEMS = [
 
 export default function Sidebar({ connected }) {
   const location = useLocation()
+  const { theme, toggleTheme, isDark } = useTheme()
 
   return (
     <aside className="w-60 flex-shrink-0 flex flex-col bg-slate-900 border-r border-slate-800 h-screen">
@@ -58,6 +62,21 @@ export default function Sidebar({ connected }) {
           </NavLink>
         ))}
       </nav>
+
+      {/* Theme Toggle */}
+      <div className="px-4 pb-2">
+        <button
+          onClick={toggleTheme}
+          title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+          className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg border border-slate-700/50 text-xs font-medium text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-all"
+        >
+          {isDark
+            ? <><Sun className="w-3.5 h-3.5 text-yellow-400" /><span>Light Mode</span></>
+            : <><Moon className="w-3.5 h-3.5 text-sky-400" /><span>Dark Mode</span></>
+          }
+          <span className="ml-auto text-xs text-slate-600 capitalize">{theme}</span>
+        </button>
+      </div>
 
       {/* Connection Status */}
       <div className="px-4 py-4 border-t border-slate-800">

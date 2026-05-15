@@ -60,8 +60,27 @@ const SCHEMA = `
     next_run        TEXT,
     created_at      TEXT NOT NULL DEFAULT (datetime('now')),
     result          TEXT,
+    tags            TEXT NOT NULL DEFAULT '[]',
+    run_limit       INTEGER DEFAULT NULL,
+    run_count       INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY (script_id) REFERENCES scripts(id) ON DELETE CASCADE
   );
+
+  -- Task run history: every execution creates a row here
+  CREATE TABLE IF NOT EXISTS task_runs (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id    TEXT NOT NULL,
+    status     TEXT NOT NULL DEFAULT 'running'
+                   CHECK(status IN ('running','completed','failed','stopped')),
+    started_at TEXT NOT NULL DEFAULT (datetime('now')),
+    ended_at   TEXT,
+    duration_ms INTEGER,
+    error      TEXT,
+    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_task_runs_task_id    ON task_runs(task_id);
+  CREATE INDEX IF NOT EXISTS idx_task_runs_started_at ON task_runs(started_at);
 
   CREATE TABLE IF NOT EXISTS logs (
     id        INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -89,6 +108,10 @@ const MIGRATIONS = [
   // v1 – add structured log columns (line, source) if they don't exist
   `ALTER TABLE logs ADD COLUMN line INTEGER`,
   `ALTER TABLE logs ADD COLUMN source TEXT`,
+  // v2 – task tags, run_limit, run_count
+  `ALTER TABLE tasks ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'`,
+  `ALTER TABLE tasks ADD COLUMN run_limit INTEGER DEFAULT NULL`,
+  `ALTER TABLE tasks ADD COLUMN run_count INTEGER NOT NULL DEFAULT 0`,
 ];
 
 function runMigrations(database) {
@@ -278,14 +301,27 @@ const tasks = {
       .all(status);
   },
 
-  create({ id, name, script_id, cron_expression }) {
+  create({ id, name, script_id, cron_expression, tags = [], run_limit = null }) {
     const now = new Date().toISOString();
     getDb()
       .prepare(
-        `INSERT INTO tasks (id, name, script_id, status, cron_expression, created_at)
-         VALUES (?, ?, ?, 'pending', ?, ?)`
+        `INSERT INTO tasks (id, name, script_id, status, cron_expression, tags, run_limit, run_count, created_at)
+         VALUES (?, ?, ?, 'pending', ?, ?, ?, 0, ?)`
       )
-      .run(id, name, script_id, cron_expression || null, now);
+      .run(id, name, script_id, cron_expression || null, JSON.stringify(tags), run_limit || null, now);
+    return tasks.findById(id);
+  },
+
+  update(id, { name, cron_expression, tags, run_limit }) {
+    const fields = [];
+    const values = [];
+    if (name !== undefined)            { fields.push('name = ?');            values.push(name); }
+    if (cron_expression !== undefined) { fields.push('cron_expression = ?'); values.push(cron_expression || null); }
+    if (tags !== undefined)            { fields.push('tags = ?');            values.push(JSON.stringify(tags)); }
+    if (run_limit !== undefined)       { fields.push('run_limit = ?');       values.push(run_limit || null); }
+    if (fields.length === 0) return tasks.findById(id);
+    values.push(id);
+    getDb().prepare(`UPDATE tasks SET ${fields.join(', ')} WHERE id = ?`).run(...values);
     return tasks.findById(id);
   },
 
@@ -299,6 +335,10 @@ const tasks = {
     return tasks.findById(id);
   },
 
+  incrementRunCount(id) {
+    getDb().prepare('UPDATE tasks SET run_count = run_count + 1 WHERE id = ?').run(id);
+  },
+
   setNextRun(id, nextRun) {
     getDb()
       .prepare('UPDATE tasks SET next_run = ? WHERE id = ?')
@@ -309,6 +349,59 @@ const tasks = {
     return getDb()
       .prepare('DELETE FROM tasks WHERE id = ?')
       .run(id);
+  },
+};
+
+// ─── Task Runs ───────────────────────────────────────────────────────────────
+const taskRuns = {
+  /**
+   * List runs for a task (newest first, paginated).
+   */
+  findByTaskId(taskId, { page = 1, limit = 20 } = {}) {
+    const offset = (page - 1) * limit;
+    const database = getDb();
+    const { total } = database.prepare('SELECT COUNT(*) AS total FROM task_runs WHERE task_id = ?').get(taskId);
+    const rows = database
+      .prepare('SELECT * FROM task_runs WHERE task_id = ? ORDER BY started_at DESC LIMIT ? OFFSET ?')
+      .all(taskId, limit, offset);
+    return { total, page, limit, rows };
+  },
+
+  /**
+   * Start a new run record.
+   */
+  start(taskId) {
+    const now = new Date().toISOString();
+    const result = getDb()
+      .prepare(`INSERT INTO task_runs (task_id, status, started_at) VALUES (?, 'running', ?)`)
+      .run(taskId, now);
+    return result.lastInsertRowid;
+  },
+
+  /**
+   * Complete a run record with final status and duration.
+   */
+  finish(runId, { status = 'completed', error = null } = {}) {
+    const now = new Date().toISOString();
+    const run = getDb().prepare('SELECT * FROM task_runs WHERE id = ?').get(runId);
+    const durationMs = run
+      ? Math.round(Date.now() - new Date(run.started_at).getTime())
+      : null;
+    getDb()
+      .prepare('UPDATE task_runs SET status = ?, ended_at = ?, duration_ms = ?, error = ? WHERE id = ?')
+      .run(status, now, durationMs, error || null, runId);
+  },
+
+  /**
+   * Get recent stats: total runs, successes, failures for a task.
+   */
+  getStats(taskId) {
+    const database = getDb();
+    const total = database.prepare('SELECT COUNT(*) AS c FROM task_runs WHERE task_id = ?').get(taskId)?.c || 0;
+    const completed = database.prepare("SELECT COUNT(*) AS c FROM task_runs WHERE task_id = ? AND status = 'completed'").get(taskId)?.c || 0;
+    const failed = database.prepare("SELECT COUNT(*) AS c FROM task_runs WHERE task_id = ? AND status = 'failed'").get(taskId)?.c || 0;
+    const avgDuration = database.prepare("SELECT AVG(duration_ms) AS avg FROM task_runs WHERE task_id = ? AND duration_ms IS NOT NULL").get(taskId)?.avg || null;
+    return { total, completed, failed, avgDuration };
   },
 };
 
@@ -374,6 +467,7 @@ const logsDb = {
 };
 
 module.exports = {
+  taskRuns,
   initialize,
   close,
   getDb,

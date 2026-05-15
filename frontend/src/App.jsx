@@ -8,15 +8,16 @@ import Logs from './pages/Logs.jsx'
 import Settings from './pages/Settings.jsx'
 import Profiles from './pages/Profiles.jsx'
 import { useSocket } from './hooks/useSocket.js'
+import { ThemeProvider } from './contexts/ThemeContext.jsx'
 
 export const SocketContext = React.createContext(null)
 
-export default function App() {
+function AppInner() {
   const socket = useSocket()
 
   return (
     <SocketContext.Provider value={socket}>
-      <div className="flex h-screen bg-slate-900 overflow-hidden">
+      <div className="flex h-screen bg-slate-900 dark:bg-slate-900 light:bg-slate-100 overflow-hidden">
         <Sidebar connected={socket.connected} />
         <main className="flex-1 overflow-y-auto">
           <Routes>
@@ -31,5 +32,13 @@ export default function App() {
         </main>
       </div>
     </SocketContext.Provider>
+  )
+}
+
+export default function App() {
+  return (
+    <ThemeProvider>
+      <AppInner />
+    </ThemeProvider>
   )
 }

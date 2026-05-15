@@ -2,8 +2,12 @@
 
 const express = require('express');
 const db      = require('../db');
+const { requireAuth } = require('../middleware/auth');
 
 const router = express.Router();
+
+// Apply auth to all log routes
+router.use(requireAuth);
 
 // ─── GET /api/logs ────────────────────────────────────────────────────────────
 // Query params:
@@ -14,11 +18,19 @@ const router = express.Router();
 //   source   (optional) — filter by source file name (e.g. task-<id>.js)
 //   date     (optional) — YYYY-MM-DD — filter by calendar date
 //   search   (optional) — free-text search in message field
+//   export   (optional) — 'csv' | 'json' — download the results as file
 router.get('/', (req, res) => {
-  let { page = 1, limit = 50, task_id, level, source, date, search } = req.query;
+  let { page = 1, limit = 50, task_id, level, source, date, search, export: exportFmt } = req.query;
 
-  page  = Math.max(1, parseInt(page, 10)  || 1);
-  limit = Math.min(200, Math.max(1, parseInt(limit, 10) || 50));
+  // For exports, fetch all matching rows (up to 10000)
+  const isExport = exportFmt === 'csv' || exportFmt === 'json';
+  if (isExport) {
+    page  = 1;
+    limit = 10000;
+  } else {
+    page  = Math.max(1, parseInt(page, 10)  || 1);
+    limit = Math.min(200, Math.max(1, parseInt(limit, 10) || 50));
+  }
 
   // Validate level
   const validLevels = ['info', 'warn', 'error', 'success', 'debug'];
@@ -48,6 +60,33 @@ router.get('/', (req, res) => {
     search:  search  || undefined,
   });
 
+  // ─── Export modes ──────────────────────────────────────────────────────────
+  if (exportFmt === 'json') {
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Content-Disposition', `attachment; filename="logs-${Date.now()}.json"`);
+    return res.send(JSON.stringify(result.rows, null, 2));
+  }
+
+  if (exportFmt === 'csv') {
+    const headers = ['id', 'task_id', 'level', 'message', 'source', 'line', 'timestamp'];
+    const escape = (v) => {
+      if (v === null || v === undefined) return '';
+      const s = String(v);
+      if (s.includes(',') || s.includes('"') || s.includes('\n')) {
+        return `"${s.replace(/"/g, '""')}"`;
+      }
+      return s;
+    };
+    const lines = [
+      headers.join(','),
+      ...result.rows.map((r) => headers.map((h) => escape(r[h])).join(',')),
+    ];
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="logs-${Date.now()}.csv"`);
+    return res.send(lines.join('\n'));
+  }
+
+  // Normal JSON response
   res.json({
     data: result.rows,
     pagination: {

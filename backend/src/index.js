@@ -12,11 +12,14 @@ const db           = require('./db');
 const browserService = require('./services/browser.service');
 const queueService   = require('./services/queue.service');
 
-const scriptsRouter = require('./routes/scripts');
-const tasksRouter = require('./routes/tasks');
-const browserRouter = require('./routes/browser');
-const logsRouter = require('./routes/logs');
+const scriptsRouter  = require('./routes/scripts');
+const tasksRouter    = require('./routes/tasks');
+const browserRouter  = require('./routes/browser');
+const logsRouter     = require('./routes/logs');
 const profilesRouter = require('./routes/profiles');
+const authRouter     = require('./routes/auth');
+
+const { apiLimiter } = require('./middleware/rateLimit');
 
 const PORT = process.env.PORT || 3001;
 const CORS_ORIGIN = process.env.CORS_ORIGIN || 'http://localhost:5173';
@@ -40,6 +43,8 @@ module.exports.io = io;
 app.use(cors({ origin: CORS_ORIGIN, credentials: true }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
+// Global API rate limiting
+app.use('/api', apiLimiter);
 
 // Request logger (lightweight)
 app.use((req, _res, next) => {
@@ -48,10 +53,11 @@ app.use((req, _res, next) => {
 });
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
-app.use('/api/scripts', scriptsRouter);
-app.use('/api/tasks', tasksRouter);
-app.use('/api/browser', browserRouter);
-app.use('/api/logs', logsRouter);
+app.use('/api/auth',     authRouter);
+app.use('/api/scripts',  scriptsRouter);
+app.use('/api/tasks',    tasksRouter);
+app.use('/api/browser',  browserRouter);
+app.use('/api/logs',     logsRouter);
 app.use('/api/profiles', profilesRouter);
 
 app.get('/api/health', (_req, res) => {

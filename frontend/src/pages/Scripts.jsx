@@ -15,7 +15,8 @@ import React, { useEffect, useState, useCallback, useRef } from 'react'
 import Editor from '@monaco-editor/react'
 import {
   Plus, Save, Trash2, Code2, FileCode, X, Loader2,
-  AlertCircle, CheckCircle2, Wand2, LayoutGrid, History, Copy
+  AlertCircle, CheckCircle2, Wand2, LayoutGrid, History, Copy,
+  Download, Upload, Keyboard
 } from 'lucide-react'
 import { scripts as scriptsApi } from '../utils/api.js'
 import { formatDistanceToNow } from 'date-fns'
@@ -253,6 +254,49 @@ export default function Scripts() {
     showToast('success', 'Code generated! Review it in the Code tab, then save.')
   }, [showToast])
 
+  // ── Import script from .js file ────────────────────────────────────────────
+  const importFileRef = useRef(null)
+  const handleImport = useCallback(() => {
+    importFileRef.current?.click()
+  }, [])
+
+  const handleFileImport = useCallback((e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = (ev) => {
+      const content = ev.target.result
+      const name = file.name.replace(/\.js$/, '')
+      setNewScript({ name, description: `Imported from ${file.name}`, content })
+      setShowCreate(true)
+    }
+    reader.readAsText(file)
+    e.target.value = '' // reset so same file can be re-imported
+  }, [])
+
+  // ── Export script as .js ──────────────────────────────────────────────────
+  const handleExport = useCallback(() => {
+    if (!selected) return
+    const url = scriptsApi.exportUrl(selected.id)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${selected.name.replace(/[^a-z0-9_-]/gi, '_')}.js`
+    a.click()
+  }, [selected])
+
+  // ── Keyboard shortcuts ─────────────────────────────────────────────────────
+  useEffect(() => {
+    const handler = (e) => {
+      // Ctrl+S / Cmd+S → save
+      if ((e.ctrlKey || e.metaKey) && e.key === 's' && selected) {
+        e.preventDefault()
+        handleSave()
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [selected, handleSave])
+
   return (
     <div className="flex h-full">
       {toast && <Toast type={toast.type} message={toast.message} onClose={() => setToast(null)} />}
@@ -309,10 +353,14 @@ export default function Scripts() {
           )}
         </div>
 
-        <div className="p-3 border-t border-slate-800">
+        <div className="p-3 border-t border-slate-800 space-y-2">
           <button onClick={() => setShowCreate(true)} className="btn-primary w-full text-xs">
             <Plus className="w-3.5 h-3.5" /> New Script
           </button>
+          <button onClick={handleImport} className="btn-secondary w-full text-xs">
+            <Upload className="w-3.5 h-3.5" /> Import .js File
+          </button>
+          <input ref={importFileRef} type="file" accept=".js,.txt" className="hidden" onChange={handleFileImport} />
         </div>
       </div>
 
@@ -362,6 +410,15 @@ export default function Scripts() {
                   History
                 </button>
 
+                {/* Export script */}
+                <button
+                  onClick={handleExport}
+                  className="btn-secondary text-xs"
+                  title="Export as .js file"
+                >
+                  <Download className="w-3.5 h-3.5" /> Export
+                </button>
+
                 {/* Duplicate */}
                 <button
                   onClick={handleDuplicate}
@@ -377,9 +434,10 @@ export default function Scripts() {
                   {deleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
                   Delete
                 </button>
-                <button onClick={handleSave} disabled={saving} className="btn-primary text-xs">
+                <button onClick={handleSave} disabled={saving} className="btn-primary text-xs" title="Save (Ctrl+S)">
                   {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
                   Save
+                  <kbd className="ml-1 text-xs opacity-50 font-mono hidden sm:inline">⌘S</kbd>
                 </button>
               </div>
             </div>

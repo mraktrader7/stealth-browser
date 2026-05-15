@@ -222,6 +222,17 @@ class ExecutorService {
     const io = getIo();
     let browserId = null;
 
+    // ── Check run limit ──────────────────────────────────────────────────────
+    const taskRow = db.tasks.findById(taskId);
+    if (taskRow && taskRow.run_limit !== null && taskRow.run_count >= taskRow.run_limit) {
+      emitLog(taskId, 'warn', `Run limit reached (${taskRow.run_limit} runs). Task will not execute.`);
+      return { success: false, result: null, error: 'Run limit reached' };
+    }
+
+    // ── Start run record ─────────────────────────────────────────────────────
+    const runId = db.taskRuns.start(taskId);
+    db.tasks.incrementRunCount(taskId);
+
     db.tasks.updateStatus(taskId, 'running');
     io.to(`task:${taskId}`).emit('task:status', { taskId, status: 'running' });
     emitLog(taskId, 'info', 'Task started');
@@ -253,6 +264,7 @@ class ExecutorService {
 
       emitLog(taskId, 'success', 'Task completed successfully');
       db.tasks.updateStatus(taskId, 'completed', result ?? null);
+      db.taskRuns.finish(runId, { status: 'completed' });
       io.to(`task:${taskId}`).emit('task:status', { taskId, status: 'completed', result });
 
       return { success: true, result: result ?? null, error: null };
@@ -263,6 +275,7 @@ class ExecutorService {
 
       emitLog(taskId, isStopped ? 'warn' : 'error', `Task ${status}: ${err.message}`);
       db.tasks.updateStatus(taskId, status, { error: err.message });
+      db.taskRuns.finish(runId, { status, error: err.message });
       io.to(`task:${taskId}`).emit('task:status', { taskId, status, error: err.message });
 
       return { success: false, result: null, error: err.message };
